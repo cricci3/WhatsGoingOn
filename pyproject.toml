@@ -8,6 +8,8 @@ authors = [
 ]
 requires-python = ">=3.13"
 dependencies = [
+    "anthropic>=1.4.0",
+    "chromadb>=1.5.9",
     "python-dotenv>=1.2.3",
     "requests>=2.34.2",
     "yfinance>=1.7.0",
@@ -15,6 +17,7 @@ dependencies = [
 
 [project.scripts]
 whatsgoingon = "whatsgoingon.ingest:main"
+whatsgoingon-agent = "whatsgoingon.agent.run:main"
 
 [build-system]
 requires = ["uv_build>=0.12.5,<0.13.0"]

@@ -5,8 +5,8 @@ Pipeline dati reale, un agente con tool use e stato persistente, RAG per la memo
 **Struttura del mese:**
 
 **Settimana 1 — Setup SWE + data layer**
-- Repo strutturato come si deve: package Python vero (non notebook), `pyproject.toml`, pytest, ruff/black, pre-commit, git con branch e PR anche se lavori da solo (abituati al flusso).
-- Script che tira giù da FRED 5-6 serie chiave (CPI, GDP, Fed Funds Rate, 10Y yield, unemployment, magari oil/energy da EIA), le salva in SQLite (basta, niente Timescale — un mese non giustifica quell'infrastruttura).
+- Repo strutturato come si deve: package Python vero (non notebook), `pyproject.toml`, pytest. 
+- Script che tira giù da FRED 5-6 serie chiave (CPI, GDP, Fed Funds Rate, 10Y yield, unemployment, magari oil/energy da EIA), le salva in SQLite.
 - Test sul data layer (mock delle chiamate API, validazione schema).
 - Fine settimana: hai dati puliti e uno script che li aggiorna, testato.
 

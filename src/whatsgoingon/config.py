@@ -30,3 +30,14 @@ YAHOO_TICKERS: dict[str, str] = {
     "CL=F": "crude_oil_futures",
     "DX-Y.NYB": "dollar_index",
 }
+
+ANTHROPIC_API_KEY = os.getenv("ANTHROPIC_API_KEY")
+# Only needed if your API key is org-wide rather than scoped to one workspace -
+# the API then requires this header (Anthropic console -> Settings -> Workspaces).
+ANTHROPIC_WORKSPACE_ID = os.getenv("ANTHROPIC_WORKSPACE_ID")
+AGENT_MODEL = os.getenv("WGO_AGENT_MODEL", "claude-haiku-4-5")
+
+# Optional: enables the search_news tool when set.
+NEWSAPI_KEY = os.getenv("NEWSAPI_KEY")
+
+CHROMA_PATH = Path(os.getenv("WGO_CHROMA_PATH", PROJECT_ROOT / "data" / "chroma"))
