@@ -1,31 +1,101 @@
 # WhatsGoingOn
 
-Pipeline dati reale, un agente con tool use e stato persistente, RAG per la memoria/coerenza nel tempo, API, containerizzazione, deploy, test, CI.
+A small hobby project that watches a handful of US macro/market indicators, figures out
+what changed over the last 30 days, and asks Claude to write a plain-English narrative
+explaining what's going on — with a hand-rolled tool-calling loop (no agent framework)
+and a local vector store so each month's narrative stays consistent with the last.
 
-**Struttura del mese:**
+It's a learning project, not a product: the goal is to build a real (if small) data
+pipeline, agent loop, RAG layer, API, and container end-to-end, and to be honest about
+where a hobby-scale setup cuts corners a production system wouldn't.
 
-**Settimana 1 — Setup SWE + data layer**
-- Repo strutturato come si deve: package Python vero (non notebook), `pyproject.toml`, pytest. 
-- Script che tira giù da FRED 5-6 serie chiave (CPI, GDP, Fed Funds Rate, 10Y yield, unemployment, magari oil/energy da EIA), le salva in SQLite.
-- Test sul data layer (mock delle chiamate API, validazione schema).
-- Fine settimana: hai dati puliti e uno script che li aggiorna, testato.
+## What it does
 
-**Settimana 2 — L'agente, versione minima ma vera**
-- Loop agentico "from scratch" (no framework, per capire i meccanismi): 
-  1. L'agente guarda lo stato attuale vs 30gg fa (delta sui numeri).
-  2. Decide, tramite function calling, se serve approfondire qualcosa (es: "CPI su, energy su → chiama tool che guarda solo la componente energy del CPI").
-  3. Chiama i tool necessari (query SQL sui tuoi dati, magari 1 chiamata a NewsAPI free tier per contesto).
-  4. Scrive la narrativa finale.
-- Qui tocchi: function/tool calling nativo, gestione dello stato tra step, error handling sulle chiamate.
-- RAG minimale: salvi ogni narrativa mensile generata in un vector store (anche solo Chroma locale) e la usi come contesto per la narrativa successiva, così il "world model" ha continuità e non si contraddice mese su mese.
+1. **Ingest** — pulls a handful of FRED macro series (CPI, GDP, Fed Funds Rate, 10Y
+   Treasury yield, unemployment, WTI oil) and Yahoo Finance market data (S&P 500, VIX,
+   gold, crude oil futures, dollar index) into a local SQLite database.
+2. **Agent** — compares the latest value of each series to ~30 days ago, decides (via
+   Claude tool calling) whether anything is worth digging into further — a bigger CPI
+   sub-component, more history on one series, a news headline — then writes a short
+   narrative. Past narratives are stored in a local Chroma collection and the most
+   similar ones are pulled back in as context, so the agent doesn't contradict what it
+   said last month.
+3. **API** — a thin FastAPI wrapper (`GET /state`, `POST /refresh`) around the agent, so
+   it can be triggered and read over HTTP instead of only the CLI.
 
-**Settimana 3 — Produzione**
-- Wrappa tutto in FastAPI (endpoint tipo `/state` che ritorna l'ultima interpretazione, `/refresh` che triggera un nuovo ciclo).
-- Dockerfile, docker-compose se separi API e eventuale DB. Progetto hobby: gira in locale (`docker run` / `uv run`), nessun deploy su hosting esterno.
-- Logging strutturato delle decisioni dell'agente (che tool ha chiamato, perché, con che input/output) — è il pezzo che ti insegna osservabilità, sottovalutata ma richiestissima.
+Everything runs locally (`uv run ...` or `docker run`) — there's no hosted deployment.
 
-**Settimana 4 — Rifinitura, CI/CD, storytelling**
-- GitHub Actions: test automatici a ogni push, deploy automatico su merge.
-- Piccola UI (anche solo una pagina HTML/Streamlit che chiama l'API) per rendere il progetto demo-abile in un colloquio in 30 secondi.
-- README serio con architettura, limiti dichiarati onestamente (specialmente sulla confidence "finta" — dichiararlo mostra maturità, non debolezza).
-- Bonus se hai tempo: uno o due test end-to-end che simulano un intero ciclo dell'agente.
+## Architecture
+
+- **Data layer** (`whatsgoingon/config.py`, `db.py`, `sources/`) — `sources/fred.py` and
+  `sources/yahoo.py` each expose a `fetch_series(...) -> list[Observation]`; `db.py`
+  holds the shared `Observation` shape and a single SQLite table with an idempotent
+  upsert; `ingest.py` wires the two together and is the CLI entry point.
+- **Agent layer** (`whatsgoingon/agent/`) — `state.py` computes the 30-day deltas;
+  `tools.py` defines the tools the agent can call (query stored observations, fetch an
+  additional FRED series, optionally search news); `loop.py` is the hand-rolled
+  tool-calling loop; `narrative_store.py` wraps the Chroma collection used for
+  month-over-month continuity; `run.py` wires it all together and is the CLI entry
+  point.
+- **API layer** (`whatsgoingon/api.py`) — FastAPI app exposing the agent over HTTP, plus
+  `logging_config.py` for structured (JSON) logs of the agent's tool-calling decisions.
+
+See [`CLAUDE.md`](CLAUDE.md) for a more detailed file-by-file breakdown, and
+[`TODO.md`](TODO.md) for the original week-by-week plan (in Italian) and what's still
+open.
+
+## Status
+
+Data ingestion, the agent loop, and the FastAPI wrapper + Dockerfile are built and
+tested. CI, a demo UI, and an honest write-up of the agent's limitations are not done
+yet — see [`TODO.md`](TODO.md).
+
+## Getting started
+
+Requires [`uv`](https://docs.astral.sh/uv/) and Python 3.13+.
+
+```bash
+uv sync
+cp .env.example .env   # then fill in the keys below
+```
+
+Environment variables (`.env`):
+
+| Variable | Required for | Notes |
+|---|---|---|
+| `FRED_API_KEY` | FRED ingestion | free key at https://fred.stlouisfed.org/docs/api/api_key.html |
+| `ANTHROPIC_API_KEY` | the agent / API | |
+| `ANTHROPIC_WORKSPACE_ID` | — | only if your Anthropic key is org-wide rather than workspace-scoped |
+| `WGO_AGENT_MODEL` | — | defaults to `claude-haiku-4-5` |
+| `NEWSAPI_KEY` | — | enables the agent's `search_news` tool |
+| `WGO_DB_PATH`, `WGO_CHROMA_PATH` | — | override the default `data/` locations |
+
+Yahoo Finance ingestion needs no key. Without `FRED_API_KEY`, FRED ingestion is skipped
+with a warning rather than failing.
+
+```bash
+# Pull data into SQLite
+uv run whatsgoingon --source all
+
+# Run one agent cycle from the CLI
+uv run whatsgoingon-agent
+
+# Or serve it over HTTP
+uv run whatsgoingon-api
+# then: GET /health, GET /state, POST /refresh?month=YYYY-MM
+# interactive docs at http://127.0.0.1:8000/docs
+
+# Or run it in Docker
+docker build -t whatsgoingon .
+docker run -p 8000:8000 -v wgo_data:/app/data --env-file .env whatsgoingon
+```
+
+## Testing
+
+```bash
+uv run pytest -q
+uv run ruff check .
+```
+
+Tests mock external calls (FRED, Yahoo, the Anthropic client) — nothing hits a live API
+or the network.
