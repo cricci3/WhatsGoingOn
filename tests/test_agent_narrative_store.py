@@ -78,3 +78,20 @@ def test_get_similar_narratives_respects_n_results(tmp_path) -> None:
     results = store.get_similar_narratives("Narrative", n_results=2)
 
     assert len(results) == 2
+
+
+def test_get_latest_narrative_empty_store_returns_none(tmp_path) -> None:
+    store = _make_store(tmp_path)
+
+    assert store.get_latest_narrative() is None
+
+
+def test_get_latest_narrative_returns_max_month(tmp_path) -> None:
+    store = _make_store(tmp_path)
+    store.add_narrative("2026-06", "June narrative.", "delta june")
+    store.add_narrative("2026-08", "August narrative.", "delta august")
+    store.add_narrative("2026-07", "July narrative.", "delta july")
+
+    latest = store.get_latest_narrative()
+
+    assert latest == {"month": "2026-08", "narrative": "August narrative.", "delta_summary": "delta august"}
