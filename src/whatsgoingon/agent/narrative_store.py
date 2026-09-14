@@ -50,3 +50,17 @@ class NarrativeStore:
                 continue
             narratives.append({"month": month, "narrative": narrative, "distance": distance})
         return narratives[:n_results]
+
+    def get_latest_narrative(self) -> dict[str, Any] | None:
+        """Return the most recently stored narrative (by month key), or None if the
+        store is empty. Months sort lexicographically (YYYY-MM), so the max id wins."""
+        result = self._collection.get()
+        if not result["ids"]:
+            return None
+
+        latest_index = max(range(len(result["ids"])), key=lambda i: result["ids"][i])
+        return {
+            "month": result["ids"][latest_index],
+            "narrative": result["documents"][latest_index],
+            "delta_summary": result["metadatas"][latest_index].get("delta_summary"),
+        }

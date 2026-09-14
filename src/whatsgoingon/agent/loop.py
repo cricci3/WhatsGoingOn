@@ -45,12 +45,20 @@ def run_agent(
         for block in response.content:
             if block.type != "tool_use":
                 continue
-            logger.info("iteration %d: tool call %s(%s)", iteration, block.name, block.input)
             impl = tool_impls.get(block.name)
             try:
                 if impl is None:
                     raise ValueError(f"unknown tool: {block.name}")
                 result = impl(**block.input)
+                logger.info(
+                    "agent tool call",
+                    extra={
+                        "iteration": iteration,
+                        "tool": block.name,
+                        "tool_input": block.input,
+                        "tool_result": result,
+                    },
+                )
                 tool_results.append(
                     {
                         "type": "tool_result",
@@ -59,7 +67,15 @@ def run_agent(
                     }
                 )
             except Exception as exc:
-                logger.warning("iteration %d: tool %s failed: %s", iteration, block.name, exc)
+                logger.warning(
+                    "agent tool call failed",
+                    extra={
+                        "iteration": iteration,
+                        "tool": block.name,
+                        "tool_input": block.input,
+                        "tool_error": str(exc),
+                    },
+                )
                 tool_results.append(
                     {
                         "type": "tool_result",
