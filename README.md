@@ -21,8 +21,7 @@ Pipeline dati reale, un agente con tool use e stato persistente, RAG per la memo
 
 **Settimana 3 — Produzione**
 - Wrappa tutto in FastAPI (endpoint tipo `/state` che ritorna l'ultima interpretazione, `/refresh` che triggera un nuovo ciclo).
-- Dockerfile, docker-compose se separi API e eventuale DB.
-- Deploy su Fly.io o Render (hanno tier gratuiti, setup rapido, perfetti per imparare deploy reale senza il costo cognitivo di AWS).
+- Dockerfile, docker-compose se separi API e eventuale DB. Progetto hobby: gira in locale (`docker run` / `uv run`), nessun deploy su hosting esterno.
 - Logging strutturato delle decisioni dell'agente (che tool ha chiamato, perché, con che input/output) — è il pezzo che ti insegna osservabilità, sottovalutata ma richiestissima.
 
 **Settimana 4 — Rifinitura, CI/CD, storytelling**
