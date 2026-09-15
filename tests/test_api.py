@@ -7,6 +7,15 @@ from whatsgoingon.api import app
 client = TestClient(app)
 
 
+def test_index_serves_demo_page() -> None:
+    response = client.get("/")
+
+    assert response.status_code == 200
+    assert response.headers["content-type"].startswith("text/html")
+    assert "Refresh" in response.text
+    assert 'id="month"' in response.text
+
+
 def test_health() -> None:
     response = client.get("/health")
 

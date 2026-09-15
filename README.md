@@ -55,7 +55,8 @@ Driven by my endless curiosity to understand *WhatsGoingOn* in the world, this p
 
    </details>
 3. **API** — a thin FastAPI wrapper (`GET /state`, `POST /refresh`) around the agent, so
-   it can be triggered and read over HTTP instead of only the CLI.
+   it can be triggered and read over HTTP instead of only the CLI, plus a minimal demo
+   page at `GET /` (latest narrative + a Refresh button) for a 30-second demo.
 
 
 ## Architecture
@@ -75,9 +76,9 @@ Driven by my endless curiosity to understand *WhatsGoingOn* in the world, this p
 
 ## Status
 
-Data ingestion, the agent loop, and the FastAPI wrapper + Dockerfile are built and
-tested. CI, a demo UI, and an honest write-up of the agent's limitations are not done
-yet.
+Data ingestion, the agent loop, the FastAPI wrapper + Dockerfile, and a minimal demo
+page are built and tested. CI and an honest write-up of the agent's limitations are not
+done yet.
 
 ## Getting started
 
