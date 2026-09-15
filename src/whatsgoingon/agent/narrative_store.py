@@ -51,6 +51,20 @@ class NarrativeStore:
             narratives.append({"month": month, "narrative": narrative, "distance": distance})
         return narratives[:n_results]
 
+    def get_narrative(self, month: str) -> dict[str, Any] | None:
+        """Return the narrative stored under this exact month key, or None if there
+        isn't one yet. Used by --retrieve to skip the agent call and reuse a
+        previously generated narrative instead of burning tokens on a rerun."""
+        result = self._collection.get(ids=[month])
+        if not result["ids"]:
+            return None
+
+        return {
+            "month": result["ids"][0],
+            "narrative": result["documents"][0],
+            "delta_summary": result["metadatas"][0].get("delta_summary"),
+        }
+
     def get_latest_narrative(self) -> dict[str, Any] | None:
         """Return the most recently stored narrative (by month key), or None if the
         store is empty. Months sort lexicographically (YYYY-MM), so the max id wins."""

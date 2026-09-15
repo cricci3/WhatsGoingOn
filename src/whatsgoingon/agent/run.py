@@ -41,7 +41,19 @@ def build_initial_message(delta_summary: str, similar_narratives: list[dict]) ->
     return "\n".join(parts)
 
 
-def run_cycle(*, month: str, store: NarrativeStore | None = None) -> str:
+def run_cycle(*, month: str, store: NarrativeStore | None = None, retrieve: bool = False) -> str:
+    store = store or NarrativeStore()
+
+    if retrieve:
+        cached = store.get_narrative(month)
+        if cached is None:
+            raise RuntimeError(
+                f"--retrieve was set but no cached narrative exists for {month}; "
+                "run once without --retrieve first"
+            )
+        logger.info("retrieved cached narrative for %s (skipped agent call)", month)
+        return cached["narrative"]
+
     if not ANTHROPIC_API_KEY:
         raise RuntimeError("ANTHROPIC_API_KEY not set; add it to .env")
 
@@ -51,7 +63,6 @@ def run_cycle(*, month: str, store: NarrativeStore | None = None) -> str:
     delta_summary = format_deltas(deltas)
     logger.info("computed deltas for %d series", len(deltas))
 
-    store = store or NarrativeStore()
     similar = store.get_similar_narratives(delta_summary, n_results=3, exclude_month=month)
     logger.info("retrieved %d similar past narratives for context", len(similar))
 
@@ -77,11 +88,17 @@ def main(argv: list[str] | None = None) -> int:
         default=date.today().strftime("%Y-%m"),
         help="Month key to store this narrative under, default: current month (YYYY-MM)",
     )
+    parser.add_argument(
+        "--retrieve",
+        action="store_true",
+        help="Skip the agent call and reuse the narrative already stored for --month, if any "
+        "(saves tokens while developing/testing)",
+    )
     args = parser.parse_args(argv)
 
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 
-    narrative = run_cycle(month=args.month)
+    narrative = run_cycle(month=args.month, retrieve=args.retrieve)
     print(narrative)
     return 0
 

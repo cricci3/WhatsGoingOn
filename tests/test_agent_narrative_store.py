@@ -80,6 +80,25 @@ def test_get_similar_narratives_respects_n_results(tmp_path) -> None:
     assert len(results) == 2
 
 
+def test_get_narrative_missing_month_returns_none(tmp_path) -> None:
+    store = _make_store(tmp_path)
+    store.add_narrative("2026-07", "July narrative.", "delta july")
+
+    assert store.get_narrative("2026-08") is None
+
+
+def test_get_narrative_returns_exact_month(tmp_path) -> None:
+    store = _make_store(tmp_path)
+    store.add_narrative("2026-07", "July narrative.", "delta july")
+    store.add_narrative("2026-08", "August narrative.", "delta august")
+
+    assert store.get_narrative("2026-07") == {
+        "month": "2026-07",
+        "narrative": "July narrative.",
+        "delta_summary": "delta july",
+    }
+
+
 def test_get_latest_narrative_empty_store_returns_none(tmp_path) -> None:
     store = _make_store(tmp_path)
 
