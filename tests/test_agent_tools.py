@@ -110,7 +110,7 @@ def test_build_tools_excludes_news_tool_without_key(monkeypatch: pytest.MonkeyPa
 
     names = {tool["name"] for tool in tools.build_tools()}
 
-    assert names == {"query_observations", "fetch_fred_series"}
+    assert names == {"query_observations", "fetch_fred_series", "get_ticker_news"}
     assert "search_news" not in tools.build_tool_implementations()
 
 
@@ -119,5 +119,64 @@ def test_build_tools_includes_news_tool_with_key(monkeypatch: pytest.MonkeyPatch
 
     names = {tool["name"] for tool in tools.build_tools()}
 
-    assert names == {"query_observations", "fetch_fred_series", "search_news"}
+    assert names == {"query_observations", "fetch_fred_series", "get_ticker_news", "search_news"}
     assert "search_news" in tools.build_tool_implementations()
+
+
+@patch("whatsgoingon.agent.tools.yf.Ticker")
+def test_get_ticker_news_maps_articles(mock_ticker_cls: Mock) -> None:
+    mock_ticker = Mock()
+    mock_ticker.get_news.return_value = [
+        {
+            "content": {
+                "title": "S&P 500 hits new high",
+                "provider": {"displayName": "Reuters"},
+                "canonicalUrl": {"url": "https://example.com/article"},
+                "pubDate": "2026-08-15T12:00:00Z",
+            }
+        },
+    ]
+    mock_ticker_cls.return_value = mock_ticker
+
+    result = tools.get_ticker_news("sp500")
+
+    mock_ticker_cls.assert_called_once_with("^GSPC")
+    mock_ticker.get_news.assert_called_once_with(count=5)
+    assert result == [
+        {
+            "title": "S&P 500 hits new high",
+            "publisher": "Reuters",
+            "link": "https://example.com/article",
+            "published_at": "2026-08-15T12:00:00Z",
+        },
+    ]
+
+
+@patch("whatsgoingon.agent.tools.yf.Ticker")
+def test_get_ticker_news_handles_flat_article_shape(mock_ticker_cls: Mock) -> None:
+    mock_ticker = Mock()
+    mock_ticker.get_news.return_value = [
+        {
+            "title": "Oil prices climb",
+            "publisher": "Bloomberg",
+            "link": "https://example.com/oil",
+            "providerPublishTime": 1755259200,
+        },
+    ]
+    mock_ticker_cls.return_value = mock_ticker
+
+    result = tools.get_ticker_news("crude_oil_futures", count=1)
+
+    assert result == [
+        {
+            "title": "Oil prices climb",
+            "publisher": "Bloomberg",
+            "link": "https://example.com/oil",
+            "published_at": "1755259200",
+        },
+    ]
+
+
+def test_get_ticker_news_rejects_untracked_series_name() -> None:
+    with pytest.raises(ValueError):
+        tools.get_ticker_news("bitcoin")
