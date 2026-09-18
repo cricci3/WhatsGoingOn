@@ -56,7 +56,10 @@ Driven by my endless curiosity to understand *WhatsGoingOn* in the world, this p
    </details>
 3. **API** — a thin FastAPI wrapper (`GET /state`, `POST /refresh`) around the agent, so
    it can be triggered and read over HTTP instead of only the CLI, plus a minimal demo
-   page at `GET /` (latest narrative + a Refresh button) for a 30-second demo.
+   page at `GET /` (latest narrative, its generation timestamp, and a button to
+   generate a new one) for a 30-second demo.
+
+   ![WhatsGoingOn demo page showing a monthly narrative with its generated timestamp and a "Generate new narrative" button](docs/screenshot.png)
 
 
 ## Architecture
@@ -106,7 +109,7 @@ uv run whatsgoingon --source all
 # Run one agent cycle from the CLI
 uv run whatsgoingon-agent
 
-# Or serve it over HTTP
+# Or serve it over HTTP -- http://localhost:8000/
 uv run whatsgoingon-api
 # then: GET /health, GET /state, POST /refresh?month=YYYY-MM
 # interactive docs at http://127.0.0.1:8000/docs
