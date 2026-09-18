@@ -28,8 +28,9 @@ If past narratives are provided for continuity, stay consistent with them unless
 contradicts what was said before - in that case, say so explicitly rather than quietly ignoring it."""
 
 
-def build_initial_message(delta_summary: str, similar_narratives: list[dict]) -> str:
+def build_initial_message(month: str, delta_summary: str, similar_narratives: list[dict]) -> str:
     parts = [
+        f"Today's date is {date.today().isoformat()}. You are writing the narrative for {month}.",
         "Here is the change in tracked indicators over roughly the last 30 days:",
         delta_summary,
     ]
@@ -37,11 +38,14 @@ def build_initial_message(delta_summary: str, similar_narratives: list[dict]) ->
         parts.append("\nFor continuity, here are past narratives discussing similar conditions:")
         for item in similar_narratives:
             parts.append(f"\n--- {item['month']} ---\n{item['narrative']}")
-    parts.append("\nWrite this month's narrative.")
+    parts.append(
+        f"\nWrite this month's narrative for {month}. If you give it a title, base it on {month} - "
+        "don't guess or invent a different month or date."
+    )
     return "\n".join(parts)
 
 
-def run_cycle(*, month: str, store: NarrativeStore | None = None, retrieve: bool = False) -> str:
+def run_cycle(*, month: str, store: NarrativeStore | None = None, retrieve: bool = False) -> dict:
     store = store or NarrativeStore()
 
     if retrieve:
@@ -52,7 +56,7 @@ def run_cycle(*, month: str, store: NarrativeStore | None = None, retrieve: bool
                 "run once without --retrieve first"
             )
         logger.info("retrieved cached narrative for %s (skipped agent call)", month)
-        return cached["narrative"]
+        return cached
 
     if not ANTHROPIC_API_KEY:
         raise RuntimeError("ANTHROPIC_API_KEY not set; add it to .env")
@@ -72,13 +76,13 @@ def run_cycle(*, month: str, store: NarrativeStore | None = None, retrieve: bool
         client,
         model=AGENT_MODEL,
         system=SYSTEM_PROMPT,
-        initial_message=build_initial_message(delta_summary, similar),
+        initial_message=build_initial_message(month, delta_summary, similar),
         tools=build_tools(),
         tool_impls=build_tool_implementations(),
     )
 
     store.add_narrative(month, narrative, delta_summary)
-    return narrative
+    return store.get_narrative(month)
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -98,8 +102,8 @@ def main(argv: list[str] | None = None) -> int:
 
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 
-    narrative = run_cycle(month=args.month, retrieve=args.retrieve)
-    print(narrative)
+    result = run_cycle(month=args.month, retrieve=args.retrieve)
+    print(result["narrative"])
     return 0
 
 

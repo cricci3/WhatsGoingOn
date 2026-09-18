@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
@@ -23,11 +24,14 @@ class NarrativeStore:
             kwargs["embedding_function"] = embedding_function
         self._collection = self._client.get_or_create_collection(**kwargs)
 
-    def add_narrative(self, month: str, narrative: str, delta_summary: str) -> None:
+    def add_narrative(
+        self, month: str, narrative: str, delta_summary: str, *, generated_at: str | None = None
+    ) -> None:
+        generated_at = generated_at or datetime.now(UTC).isoformat()
         self._collection.upsert(
             ids=[month],
             documents=[narrative],
-            metadatas=[{"month": month, "delta_summary": delta_summary}],
+            metadatas=[{"month": month, "delta_summary": delta_summary, "generated_at": generated_at}],
         )
 
     def get_similar_narratives(
@@ -63,6 +67,7 @@ class NarrativeStore:
             "month": result["ids"][0],
             "narrative": result["documents"][0],
             "delta_summary": result["metadatas"][0].get("delta_summary"),
+            "generated_at": result["metadatas"][0].get("generated_at"),
         }
 
     def get_latest_narrative(self) -> dict[str, Any] | None:
@@ -77,4 +82,5 @@ class NarrativeStore:
             "month": result["ids"][latest_index],
             "narrative": result["documents"][latest_index],
             "delta_summary": result["metadatas"][latest_index].get("delta_summary"),
+            "generated_at": result["metadatas"][latest_index].get("generated_at"),
         }

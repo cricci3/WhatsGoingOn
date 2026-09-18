@@ -89,13 +89,14 @@ def test_get_narrative_missing_month_returns_none(tmp_path) -> None:
 
 def test_get_narrative_returns_exact_month(tmp_path) -> None:
     store = _make_store(tmp_path)
-    store.add_narrative("2026-07", "July narrative.", "delta july")
+    store.add_narrative("2026-07", "July narrative.", "delta july", generated_at="2026-07-05T10:00:00+00:00")
     store.add_narrative("2026-08", "August narrative.", "delta august")
 
     assert store.get_narrative("2026-07") == {
         "month": "2026-07",
         "narrative": "July narrative.",
         "delta_summary": "delta july",
+        "generated_at": "2026-07-05T10:00:00+00:00",
     }
 
 
@@ -108,9 +109,16 @@ def test_get_latest_narrative_empty_store_returns_none(tmp_path) -> None:
 def test_get_latest_narrative_returns_max_month(tmp_path) -> None:
     store = _make_store(tmp_path)
     store.add_narrative("2026-06", "June narrative.", "delta june")
-    store.add_narrative("2026-08", "August narrative.", "delta august")
+    store.add_narrative(
+        "2026-08", "August narrative.", "delta august", generated_at="2026-08-01T09:00:00+00:00"
+    )
     store.add_narrative("2026-07", "July narrative.", "delta july")
 
     latest = store.get_latest_narrative()
 
-    assert latest == {"month": "2026-08", "narrative": "August narrative.", "delta_summary": "delta august"}
+    assert latest == {
+        "month": "2026-08",
+        "narrative": "August narrative.",
+        "delta_summary": "delta august",
+        "generated_at": "2026-08-01T09:00:00+00:00",
+    }

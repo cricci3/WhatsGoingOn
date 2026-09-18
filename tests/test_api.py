@@ -12,7 +12,7 @@ def test_index_serves_demo_page() -> None:
 
     assert response.status_code == 200
     assert response.headers["content-type"].startswith("text/html")
-    assert "Refresh" in response.text
+    assert "Generate new narrative" in response.text
     assert 'id="month"' in response.text
 
 
@@ -33,7 +33,12 @@ def test_state_returns_404_when_no_narrative_yet(monkeypatch) -> None:
 
 
 def test_state_returns_latest_narrative(monkeypatch) -> None:
-    latest = {"month": "2026-08", "narrative": "Markets calm.", "delta_summary": "cpi +0.1%"}
+    latest = {
+        "month": "2026-08",
+        "narrative": "Markets calm.",
+        "delta_summary": "cpi +0.1%",
+        "generated_at": "2026-08-01T12:00:00+00:00",
+    }
     fake_store = Mock(get_latest_narrative=Mock(return_value=latest))
     monkeypatch.setattr("whatsgoingon.api.NarrativeStore", lambda: fake_store)
 
@@ -44,18 +49,24 @@ def test_state_returns_latest_narrative(monkeypatch) -> None:
 
 
 def test_refresh_runs_a_cycle_and_returns_the_narrative(monkeypatch) -> None:
-    fake_run_cycle = Mock(return_value="This month, not much changed.")
+    expected = {
+        "month": "2026-08",
+        "narrative": "This month, not much changed.",
+        "delta_summary": "cpi flat",
+        "generated_at": "2026-08-01T12:00:00+00:00",
+    }
+    fake_run_cycle = Mock(return_value=expected)
     monkeypatch.setattr("whatsgoingon.api.run_cycle", fake_run_cycle)
 
     response = client.post("/refresh", params={"month": "2026-08"})
 
     assert response.status_code == 200
-    assert response.json() == {"month": "2026-08", "narrative": "This month, not much changed."}
+    assert response.json() == expected
     fake_run_cycle.assert_called_once_with(month="2026-08")
 
 
 def test_refresh_defaults_month_to_today(monkeypatch) -> None:
-    fake_run_cycle = Mock(return_value="narrative")
+    fake_run_cycle = Mock(side_effect=lambda *, month: {"month": month, "narrative": "narrative"})
     monkeypatch.setattr("whatsgoingon.api.run_cycle", fake_run_cycle)
 
     response = client.post("/refresh")
