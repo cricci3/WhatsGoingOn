@@ -25,7 +25,7 @@ Pipeline dati reale, un agente con tool use e stato persistente, RAG per la memo
 - Logging strutturato delle decisioni dell'agente (che tool ha chiamato, perché, con che input/output) — è il pezzo che ti insegna osservabilità, sottovalutata ma richiestissima.
 
 **Settimana 4 — Rifinitura, CI/CD, storytelling** (in corso)
-- GitHub Actions: test automatici a ogni push, deploy automatico su merge.
+- ✅ Fatto — GitHub Actions: test + lint automatici a ogni push/PR su main. (Niente deploy automatico: progetto hobby locale, nessun target di deploy — vedi Settimana 3.)
 - ✅ Fatto — Piccola UI (anche solo una pagina HTML/Streamlit che chiama l'API) per rendere il progetto demo-abile in un colloquio in 30 secondi. (Pagina HTML/JS inline servita da `GET /`, niente Streamlit.)
 - README serio con architettura, limiti dichiarati onestamente (specialmente sulla confidence "finta" — dichiararlo mostra maturità, non debolezza). (Architettura c'è; manca ancora la sezione limiti/confidence onesta.)
 - Bonus se hai tempo: uno o due test end-to-end che simulano un intero ciclo dell'agente.
