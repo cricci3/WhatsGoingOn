@@ -70,6 +70,11 @@ class NarrativeStore:
             "generated_at": result["metadatas"][0].get("generated_at"),
         }
 
+    def list_months(self) -> list[str]:
+        """Return all stored month keys, sorted ascending (YYYY-MM sorts lexicographically)."""
+        result = self._collection.get()
+        return sorted(result["ids"])
+
     def get_latest_narrative(self) -> dict[str, Any] | None:
         """Return the most recently stored narrative (by month key), or None if the
         store is empty. Months sort lexicographically (YYYY-MM), so the max id wins."""

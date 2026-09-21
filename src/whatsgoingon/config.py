@@ -41,3 +41,8 @@ AGENT_MODEL = os.getenv("WGO_AGENT_MODEL", "claude-haiku-4-5")
 NEWSAPI_KEY = os.getenv("NEWSAPI_KEY")
 
 CHROMA_PATH = Path(os.getenv("WGO_CHROMA_PATH", PROJECT_ROOT / "data" / "chroma"))
+
+# Optional: local Obsidian vault folder to export each narrative to as a Markdown note.
+# Export is a no-op when unset.
+_obsidian_vault_path = os.getenv("WGO_OBSIDIAN_VAULT_PATH")
+OBSIDIAN_VAULT_PATH = Path(_obsidian_vault_path) if _obsidian_vault_path else None

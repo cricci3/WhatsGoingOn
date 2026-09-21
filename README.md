@@ -98,6 +98,7 @@ Environment variables (`.env`):
 |---|---|---|
 | `FRED_API_KEY` | FRED ingestion | free key at https://fred.stlouisfed.org/docs/api/api_key.html |
 | `ANTHROPIC_API_KEY` | the agent / API | |
+| `WGO_OBSIDIAN_VAULT_PATH` | optional | folder to also export each narrative to as an Obsidian-vault Markdown note; unset means no export |
 
 Yahoo Finance ingestion needs no key. Without `FRED_API_KEY`, FRED ingestion is skipped
 with a warning rather than failing.
