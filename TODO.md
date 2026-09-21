@@ -28,7 +28,7 @@ Pipeline dati reale, un agente con tool use e stato persistente, RAG per la memo
 - ✅ Fatto — GitHub Actions: test + lint automatici a ogni push/PR su main. (Niente deploy automatico: progetto hobby locale, nessun target di deploy — vedi Settimana 3.)
 - ✅ Fatto — Piccola UI (anche solo una pagina HTML/Streamlit che chiama l'API) per rendere il progetto demo-abile in un colloquio in 30 secondi. (Pagina HTML/JS inline servita da `GET /`, niente Streamlit.)
 - README serio con architettura, limiti dichiarati onestamente (specialmente sulla confidence "finta" — dichiararlo mostra maturità, non debolezza). (Architettura c'è; manca ancora la sezione limiti/confidence onesta.)
-- Bonus se hai tempo: uno o due test end-to-end che simulano un intero ciclo dell'agente.
+- ✅ Fatto — Bonus: test end-to-end (`tests/test_e2e.py`) che simula un intero ciclo (ingest → agente → store → API), mockando solo le chiamate di rete esterne (FRED, Yahoo Finance, Anthropic).
 
 **Settimana 5 (opzionale) — Continuità visibile in Obsidian** ✅ Fatto
 - Export opzionale (`WGO_OBSIDIAN_VAULT_PATH`) di ogni narrativa generata da `run_cycle()` come nota Markdown in un vault Obsidian locale (frontmatter YAML, tag per serie con delta significativo, wikilink `[[YYYY-MM]]` al mese precedente), così la continuità che oggi vive solo dentro Chroma diventa navigabile nel graph view.
