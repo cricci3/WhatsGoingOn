@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import logging
+import sys
 from datetime import date
 
 import anthropic
@@ -19,6 +20,11 @@ from whatsgoingon.config import (
 )
 
 logger = logging.getLogger(__name__)
+
+FUTURE_MONTH_WARNING_TEMPLATE = (
+    "{month} is a future month - there is no real data for it yet. This narrative reflects "
+    "the most recently ingested data, not anything that has actually happened in {month}."
+)
 
 SYSTEM_PROMPT = """You are a macro/markets analyst producing a monthly "what's going on" narrative.
 
@@ -56,8 +62,21 @@ def _previous_month(store: NarrativeStore, month: str) -> str | None:
     return max(earlier_months) if earlier_months else None
 
 
+def _is_future_month(month: str) -> bool:
+    """True if `month` (YYYY-MM) is after the current calendar month. YYYY-MM strings sort
+    lexicographically, the same trick NarrativeStore relies on for month ordering."""
+    return month > date.today().strftime("%Y-%m")
+
+
+def _with_future_month_warning(record: dict, month: str) -> dict:
+    return {**record, "warning": FUTURE_MONTH_WARNING_TEMPLATE.format(month=month)}
+
+
 def run_cycle(*, month: str, store: NarrativeStore | None = None, retrieve: bool = False) -> dict:
     store = store or NarrativeStore()
+    future_month = _is_future_month(month)
+    if future_month:
+        logger.warning("narrative requested for future month %s; no real data exists for it yet", month)
 
     if retrieve:
         cached = store.get_narrative(month)
@@ -67,7 +86,7 @@ def run_cycle(*, month: str, store: NarrativeStore | None = None, retrieve: bool
                 "run once without --retrieve first"
             )
         logger.info("retrieved cached narrative for %s (skipped agent call)", month)
-        return cached
+        return _with_future_month_warning(cached, month) if future_month else cached
 
     if not ANTHROPIC_API_KEY:
         raise RuntimeError("ANTHROPIC_API_KEY not set; add it to .env")
@@ -105,7 +124,7 @@ def run_cycle(*, month: str, store: NarrativeStore | None = None, retrieve: bool
         except Exception:
             logger.warning("failed to export narrative to Obsidian vault", exc_info=True)
 
-    return result
+    return _with_future_month_warning(result, month) if future_month else result
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -126,6 +145,8 @@ def main(argv: list[str] | None = None) -> int:
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 
     result = run_cycle(month=args.month, retrieve=args.retrieve)
+    if result.get("warning"):
+        print(f"WARNING: {result['warning']}", file=sys.stderr)
     print(result["narrative"])
     return 0
 

@@ -46,6 +46,8 @@ _INDEX_HTML = """\
     --border: #e5e7eb;
     --error: #b91c1c;
     --error-bg: #fef2f2;
+    --warning: #92400e;
+    --warning-bg: #fffbeb;
   }
   @media (prefers-color-scheme: dark) {
     :root:not([data-theme="light"]) {
@@ -60,6 +62,8 @@ _INDEX_HTML = """\
       --border: #33345a;
       --error: #f87171;
       --error-bg: #3a1a1a;
+      --warning: #fbbf24;
+      --warning-bg: #3a2f0f;
     }
   }
   :root[data-theme="dark"] {
@@ -74,6 +78,8 @@ _INDEX_HTML = """\
     --border: #33345a;
     --error: #f87171;
     --error-bg: #3a1a1a;
+    --warning: #fbbf24;
+    --warning-bg: #3a2f0f;
   }
   * { box-sizing: border-box; }
   body {
@@ -212,6 +218,7 @@ _INDEX_HTML = """\
     display: none;
   }
   .message.visible { display: block; }
+  .message.warning { color: var(--warning); background: var(--warning-bg); }
   .fade-in { animation: fadeIn 0.35s ease; }
   @keyframes fadeIn {
     from { opacity: 0; transform: translateY(4px); }
@@ -376,7 +383,11 @@ _INDEX_HTML = """\
     timestampEl.textContent = formatTimestamp(data.generated_at);
     narrativeEl.innerHTML = markdownToHtml(data.narrative);
     playFadeIn();
-    clearMessage();
+    if (data.warning) {
+      showMessage(data.warning, { warning: true });
+    } else {
+      clearMessage();
+    }
   }
 
   function showEmptyState() {
@@ -386,14 +397,16 @@ _INDEX_HTML = """\
     playFadeIn();
   }
 
-  function showMessage(text) {
+  function showMessage(text, options) {
+    options = options || {};
     messageEl.textContent = text;
+    messageEl.classList.toggle("warning", !!options.warning);
     messageEl.classList.add("visible");
   }
 
   function clearMessage() {
     messageEl.textContent = "";
-    messageEl.classList.remove("visible");
+    messageEl.classList.remove("visible", "warning");
   }
 
   async function loadState() {
@@ -423,6 +436,9 @@ _INDEX_HTML = """\
         showMessage(data.detail || "Refresh failed.");
       } else {
         showNarrative(data);
+        if (data.warning) {
+          window.alert(data.warning);
+        }
       }
     } catch (err) {
       showMessage("Refresh failed: " + err);

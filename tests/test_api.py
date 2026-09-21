@@ -76,6 +76,23 @@ def test_refresh_defaults_month_to_today(monkeypatch) -> None:
     assert response.json()["month"] == called_month
 
 
+def test_refresh_passes_through_future_month_warning(monkeypatch) -> None:
+    """run_cycle() adds a "warning" key when the requested month is in the future (see
+    test_agent_run.py); /refresh must forward it as-is so the demo page's JS can pop it up."""
+    expected = {
+        "month": "2099-01",
+        "narrative": "This month, not much changed.",
+        "warning": "2099-01 is a future month - there is no real data for it yet.",
+    }
+    fake_run_cycle = Mock(return_value=expected)
+    monkeypatch.setattr("whatsgoingon.api.run_cycle", fake_run_cycle)
+
+    response = client.post("/refresh", params={"month": "2099-01"})
+
+    assert response.status_code == 200
+    assert response.json() == expected
+
+
 def test_refresh_maps_runtime_error_to_503(monkeypatch) -> None:
     fake_run_cycle = Mock(side_effect=RuntimeError("no data found"))
     monkeypatch.setattr("whatsgoingon.api.run_cycle", fake_run_cycle)
