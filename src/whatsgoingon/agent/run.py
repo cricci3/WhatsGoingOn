@@ -8,9 +8,15 @@ import anthropic
 
 from whatsgoingon.agent.loop import run_agent
 from whatsgoingon.agent.narrative_store import NarrativeStore
+from whatsgoingon.agent.obsidian_export import export_narrative_to_vault
 from whatsgoingon.agent.state import SeriesDelta, compute_deltas, format_deltas
 from whatsgoingon.agent.tools import build_tool_implementations, build_tools
-from whatsgoingon.config import AGENT_MODEL, ANTHROPIC_API_KEY, ANTHROPIC_WORKSPACE_ID
+from whatsgoingon.config import (
+    AGENT_MODEL,
+    ANTHROPIC_API_KEY,
+    ANTHROPIC_WORKSPACE_ID,
+    OBSIDIAN_VAULT_PATH,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -43,6 +49,11 @@ def build_initial_message(month: str, delta_summary: str, similar_narratives: li
         "don't guess or invent a different month or date."
     )
     return "\n".join(parts)
+
+
+def _previous_month(store: NarrativeStore, month: str) -> str | None:
+    earlier_months = [m for m in store.list_months() if m < month]
+    return max(earlier_months) if earlier_months else None
 
 
 def run_cycle(*, month: str, store: NarrativeStore | None = None, retrieve: bool = False) -> dict:
@@ -82,7 +93,19 @@ def run_cycle(*, month: str, store: NarrativeStore | None = None, retrieve: bool
     )
 
     store.add_narrative(month, narrative, delta_summary)
-    return store.get_narrative(month)
+    result = store.get_narrative(month)
+
+    if OBSIDIAN_VAULT_PATH is not None:
+        try:
+            export_narrative_to_vault(
+                result,
+                OBSIDIAN_VAULT_PATH,
+                previous_month=_previous_month(store, month),
+            )
+        except Exception:
+            logger.warning("failed to export narrative to Obsidian vault", exc_info=True)
+
+    return result
 
 
 def main(argv: list[str] | None = None) -> int:
