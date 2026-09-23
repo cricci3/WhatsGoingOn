@@ -3,6 +3,33 @@
 Fonte di verità per scope e sequenza (in italiano). `CLAUDE.md` e `README.md` restano
 sintetici e puntano qui — non duplicare i dettagli lì.
 
+## Stato attuale (aggiornato 2026-09-23)
+
+- **Branch:** `feat/orchestrator-week1` — codice Settimana 1 committato e pushato
+  (`ac7d858`); PR verso `main` non ancora aperta. Non committati: questo `TODO.md`,
+  `.gitignore` (smette di ignorare `CLAUDE.md`, ignora `past_conversations/`), `CLAUDE.md`.
+- **Test/lint:** 118 passed / ruff ok.
+- **Fatto nell'ultima sessione:** run live `whatsgoingon-debate --month 2026-09 --max-rounds 2`
+  ok: 2 giri, lo Skeptic ha colto un CPI di luglio spacciato per settembre; ~53k token in /
+  4.6k out su Haiku 4.5 (~$0.08, stima). Eliminato `test_orchestrator_stubs.py` (testava solo
+  i vecchi stub `NotImplementedError`).
+- **Problemi aperti (dalla run live):**
+  1. Analyst al giro 1 esaurisce i 6 turni di `call_structured` e viene forzato a consegnare
+     (troppe tool call di ricerca).
+  2. Claim id rinominati tra un giro e l'altro (`c11` → `c11_revised`) nonostante il prompt.
+  3. I log dello Skeptic non hanno `round` (`critique_draft` riceve solo il draft).
+  4. L'Analyst non riceve le narrative dei mesi passati (`NarrativeStore`), a differenza
+     della Fase 1.
+  5. Editor forzato a pubblicare segnala la critica high irrisolta nel changelog ma non
+     ammorbidisce il testo finale — da verificare se è un problema di prompt.
+- **Decisioni recenti:** l'ultimo giro pubblica sempre (niente "revise" nello schema
+  dell'Editor) → il ciclo termina per costruzione; il modello nomina solo le serie, i
+  `SeriesDelta` li attacca il codice → nessun numero inventato nei claim; critiche high
+  saltano l'Editor finché restano giri.
+- **Prossimo passo:** sistemare i punti 1–4 (partire dal 2: validare in `produce_draft` che
+  gli id dei claim riportati coincidano con quelli del giro prima), poi aprire la PR, poi
+  Settimana 2.
+
 ## Fase 1 — Narrativa a singolo agente (WhatsGoingOn)
 
 - [x] Data layer: FRED + Yahoo Finance → SQLite, idempotente (`sources/`, `db.py`)
@@ -46,7 +73,7 @@ changelog di cosa è cambiato e perché).
       fallire silenziosamente
 - [ ] Timeout e retry per agente (estende `retry.py`) con degradazione controllata
       (es. Editor pubblica senza critica se lo Skeptic non risponde, e lo segnala)
-- [ ] Test che mockano ogni agente separatamente e verificano l'orchestrazione, non
+- [x] Test che mockano ogni agente separatamente e verificano l'orchestrazione, non
       solo l'output finale
 
 ### Settimana 3 — Produzione
