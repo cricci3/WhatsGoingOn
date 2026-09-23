@@ -36,6 +36,10 @@ ANTHROPIC_API_KEY = os.getenv("ANTHROPIC_API_KEY")
 # the API then requires this header (Anthropic console -> Settings -> Workspaces).
 ANTHROPIC_WORKSPACE_ID = os.getenv("ANTHROPIC_WORKSPACE_ID")
 AGENT_MODEL = os.getenv("WGO_AGENT_MODEL", "claude-haiku-4-5")
+# Phase 2 orchestrator: one model per role, each defaulting to the Phase 1 agent's model.
+ANALYST_MODEL = os.getenv("WGO_ANALYST_MODEL", AGENT_MODEL)
+SKEPTIC_MODEL = os.getenv("WGO_SKEPTIC_MODEL", AGENT_MODEL)
+EDITOR_MODEL = os.getenv("WGO_EDITOR_MODEL", AGENT_MODEL)
 
 # Optional: enables the search_news tool when set.
 NEWSAPI_KEY = os.getenv("NEWSAPI_KEY")

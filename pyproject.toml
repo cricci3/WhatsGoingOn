@@ -20,6 +20,7 @@ dependencies = [
 [project.scripts]
 whatsgoingon = "whatsgoingon.ingest:main"
 whatsgoingon-agent = "whatsgoingon.agent.run:main"
+whatsgoingon-debate = "whatsgoingon.orchestrator.run:main"
 whatsgoingon-api = "whatsgoingon.api:main"
 
 [build-system]
