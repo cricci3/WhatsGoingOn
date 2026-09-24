@@ -8,7 +8,7 @@ import anthropic
 from whatsgoingon.agent.state import SeriesDelta
 from whatsgoingon.logging_config import agent_logger
 from whatsgoingon.orchestrator.analyst import produce_draft
-from whatsgoingon.orchestrator.budget import BudgetExceeded, CycleBudget
+from whatsgoingon.orchestrator.budget import AgentUnavailable, CycleBudget
 from whatsgoingon.orchestrator.editor import decide
 from whatsgoingon.orchestrator.skeptic import critique_draft
 from whatsgoingon.orchestrator.state import (
@@ -20,6 +20,10 @@ from whatsgoingon.orchestrator.state import (
 )
 
 DEFAULT_MAX_ROUNDS = 3
+# What an agent call can fail with that the cycle degrades on: one of its own limits (budget,
+# time), or an API error that outlasted call_structured()'s retries. Anything else is a bug
+# and should crash loudly rather than be dressed up as a fallback.
+AGENT_FAILURES = (AgentUnavailable, anthropic.APIError)
 
 
 def run_debate_cycle(
@@ -47,10 +51,12 @@ def run_debate_cycle(
     on the resulting DebateState as-is, so every agent in the cycle sees the same snapshot -
     see DebateState's docstring for why that matters to the Skeptic.
 
-    `budget` (default: unlimited) caps per-agent tokens and the cycle's cost. When an agent
-    hits a limit, the cycle degrades explicitly instead of failing - each fallback is
-    recorded in state.fallbacks, logged, and passed to the Editor so the changelog says so:
-    - Analyst, round 1: nothing to publish yet, so BudgetExceeded propagates to the caller;
+    `budget` (default: unlimited) caps per-agent tokens, the cycle's cost, and each agent
+    turn's wall-clock time. When an agent hits a limit or fails with an API error its retries
+    couldn't fix (AGENT_FAILURES), the cycle degrades explicitly instead of failing - each
+    fallback is recorded in state.fallbacks, logged, and passed to the Editor so the changelog
+    says so:
+    - Analyst, round 1: nothing to publish yet, so the error propagates to the caller;
     - Analyst, later rounds: the previous round's draft goes to the Editor as-is;
     - Skeptic: the draft goes to the Editor unreviewed (DebateRound.review_skipped);
     - Editor: the latest draft is published unedited.
@@ -68,15 +74,20 @@ def run_debate_cycle(
             draft = produce_draft(
                 client, model=analyst_model, state=state, budget=state.budget.for_agent("analyst")
             )
-        except BudgetExceeded as exc:
+        except AGENT_FAILURES as exc:
             if not state.rounds:
                 log.error(
-                    "analyst out of budget before a first draft; nothing to publish",
-                    extra={"budget": state.budget.summary()},
+                    "analyst failed before a first draft; nothing to publish",
+                    extra={"error": _describe(exc), "budget": state.budget.summary()},
                 )
                 raise
             _fall_back(
-                state, log, exc, round_number, "published the previous round's draft without revising it"
+                state,
+                log,
+                exc,
+                agent="analyst",
+                round_number=round_number,
+                action="published the previous round's draft without revising it",
             )
             return _publish(client, state, log, editor_model=editor_model)
         log.info(
@@ -93,9 +104,16 @@ def run_debate_cycle(
             critiques = critique_draft(
                 client, model=skeptic_model, draft=draft, budget=state.budget.for_agent("skeptic")
             )
-        except BudgetExceeded as exc:
-            critiques, review_skipped = [], str(exc)
-            _fall_back(state, log, exc, round_number, "sent the draft to the editor without a review")
+        except AGENT_FAILURES as exc:
+            critiques, review_skipped = [], _describe(exc)
+            _fall_back(
+                state,
+                log,
+                exc,
+                agent="skeptic",
+                round_number=round_number,
+                action="sent the draft to the editor without a review",
+            )
         state.rounds.append(DebateRound(draft=draft, critiques=critiques, review_skipped=review_skipped))
         log.info(
             "skeptic raised critiques",
@@ -145,9 +163,16 @@ def _editor_decision(
             force_publish=force_publish,
             budget=state.budget.for_agent("editor"),
         )
-    except BudgetExceeded as exc:
-        _fall_back(state, log, exc, len(state.rounds), "published the latest draft unedited")
-        return _unedited(state, reason=f"editor unavailable: {exc}")
+    except AGENT_FAILURES as exc:
+        _fall_back(
+            state,
+            log,
+            exc,
+            agent="editor",
+            round_number=len(state.rounds),
+            action="published the latest draft unedited",
+        )
+        return _unedited(state, reason=f"editor unavailable: {_describe(exc)}")
 
     if decision.action == "revise" and force_publish:
         # decide() doesn't offer "revise" when publishing is forced; this only guards against
@@ -180,14 +205,31 @@ def _unedited(state: DebateState, *, reason: str) -> EditorDecision:
     )
 
 
+def _describe(exc: Exception) -> str:
+    """Our own limit errors already read as sentences; for API errors, name the error type."""
+    if isinstance(exc, AgentUnavailable):
+        return str(exc)
+    return f"API error after retries ({type(exc).__name__}: {exc})"
+
+
 def _fall_back(
-    state: DebateState, log: logging.LoggerAdapter, exc: BudgetExceeded, round_number: int, action: str
+    state: DebateState,
+    log: logging.LoggerAdapter,
+    exc: Exception,
+    *,
+    agent: str,
+    round_number: int,
+    action: str,
 ) -> None:
-    fallback = Fallback(agent=exc.agent, round=round_number, reason=str(exc), action=action)
+    fallback = Fallback(agent=agent, round=round_number, reason=_describe(exc), action=action)
     state.fallbacks.append(fallback)
     log.warning(
-        "budget exceeded; falling back",
-        extra={"fallback": asdict(fallback), "scope": exc.scope, "budget": state.budget.summary()},
+        "agent failed; falling back",
+        extra={
+            "fallback": asdict(fallback),
+            "error_type": type(exc).__name__,
+            "budget": state.budget.summary(),
+        },
     )
 
 

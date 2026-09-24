@@ -3,6 +3,9 @@
 from types import SimpleNamespace
 from unittest.mock import Mock
 
+import anthropic
+import httpx2
+
 from whatsgoingon.agent.state import SeriesDelta
 
 CPI_DELTA = SeriesDelta(
@@ -33,7 +36,29 @@ def response(*content, input_tokens: int = 100, output_tokens: int = 50) -> Simp
     )
 
 
+_REQUEST = httpx2.Request("POST", "https://api.anthropic.com/v1/messages")
+_STATUS_ERRORS = {
+    400: anthropic.BadRequestError,
+    429: anthropic.RateLimitError,
+    529: anthropic.OverloadedError,
+}
+
+
+def api_error(status: int | str | None, headers: dict[str, str] | None = None) -> anthropic.APIError:
+    """A real SDK exception: a connection error for None, a timeout for "timeout", else the
+    status error class the SDK raises for that HTTP status."""
+    if status is None:
+        return anthropic.APIConnectionError(request=_REQUEST)
+    if status == "timeout":
+        return anthropic.APITimeoutError(request=_REQUEST)
+    cls = _STATUS_ERRORS[status]
+    return cls(
+        f"HTTP {status}", response=httpx2.Response(status, headers=headers, request=_REQUEST), body=None
+    )
+
+
 def client_with(*responses) -> Mock:
     client = Mock()
     client.messages.create = Mock(side_effect=list(responses))
+    client.with_options = Mock(return_value=client)  # per-call options, same fake underneath
     return client

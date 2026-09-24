@@ -1,16 +1,25 @@
-"""Budget accounting on its own, and how call_structured() enforces it."""
+"""Budget accounting (tokens, cost, time) on its own, and how call_structured() enforces it
+and retries transient API errors."""
 
+import threading
+import time
+from unittest.mock import Mock
+
+import anthropic
 import pytest
-from orchestrator_fakes import client_with, response, tool_use
+from orchestrator_fakes import api_error, client_with, response, tool_use
 
+import whatsgoingon.orchestrator.structured as structured_module
 from whatsgoingon.logging_config import agent_logger
 from whatsgoingon.orchestrator.budget import (
     UNKNOWN_MODEL_PRICE,
+    AgentBudget,
+    AgentTimeout,
     BudgetExceeded,
     CycleBudget,
     estimate_cost_usd,
 )
-from whatsgoingon.orchestrator.structured import call_structured
+from whatsgoingon.orchestrator.structured import MAX_ATTEMPTS, _retry_after_s, call_structured
 
 
 def test_cost_uses_the_models_input_and_output_prices() -> None:
@@ -68,14 +77,15 @@ OUTPUT_TOOL = {"name": "submit", "input_schema": {"type": "object"}}
 LOOKUP_TOOL = {"name": "lookup", "input_schema": {"type": "object"}}
 
 
-def _call(client, budget: CycleBudget, **overrides):
+def _call(client, budget: CycleBudget | AgentBudget, **overrides):
+    view = budget if isinstance(budget, AgentBudget) else budget.for_agent("analyst")
     kwargs = dict(
         model="claude-haiku-4-5",
         system="system",
         user_message="hello",
         output_tool=OUTPUT_TOOL,
         log=agent_logger("test", agent="analyst"),
-        budget=budget.for_agent("analyst"),
+        budget=view,
     )
     return call_structured(client, **{**kwargs, **overrides})
 
@@ -120,3 +130,141 @@ def test_output_submitted_by_the_call_that_crosses_the_limit_is_kept() -> None:
     budget = CycleBudget(agent_max_tokens={"analyst": 100})
 
     assert _call(client, budget) == {"ok": True}
+
+
+# --- time limits and retries ---
+
+
+@pytest.fixture
+def no_sleep(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr("whatsgoingon.retry.time.sleep", lambda _seconds: None)
+
+
+def test_for_agent_starts_the_clock_only_for_agents_with_a_time_limit() -> None:
+    budget = CycleBudget(agent_timeout_s={"skeptic": 60})
+
+    skeptic, editor = budget.for_agent("skeptic"), budget.for_agent("editor")
+
+    assert 59 < skeptic.remaining_s() <= 60
+    assert editor.deadline is None and editor.remaining_s() is None
+
+
+def test_check_raises_agent_timeout_once_the_deadline_has_passed() -> None:
+    view = AgentBudget(cycle=CycleBudget(), agent="skeptic", timeout_s=60, deadline=time.monotonic() - 1)
+
+    with pytest.raises(AgentTimeout, match="skeptic didn't finish within its 60s"):
+        view.check()
+
+
+def test_transient_api_errors_are_retried(no_sleep: None) -> None:
+    client = client_with(api_error(529), api_error(None), response(tool_use("submit", {"ok": True})))
+
+    assert _call(client, CycleBudget()) == {"ok": True}
+    assert client.messages.create.call_count == 3
+
+
+def test_persistent_transient_errors_give_up_after_max_attempts(no_sleep: None) -> None:
+    client = client_with(*[api_error(429)] * MAX_ATTEMPTS)
+
+    with pytest.raises(anthropic.RateLimitError):
+        _call(client, CycleBudget())
+    assert client.messages.create.call_count == MAX_ATTEMPTS
+
+
+def test_non_transient_api_errors_are_not_retried(no_sleep: None) -> None:
+    client = client_with(api_error(400))
+
+    with pytest.raises(anthropic.BadRequestError):
+        _call(client, CycleBudget())
+    assert client.messages.create.call_count == 1
+
+
+def test_sdk_retries_are_off_and_each_request_gets_the_time_left() -> None:
+    client = client_with(response(tool_use("submit", {})))
+    budget = CycleBudget(agent_timeout_s={"analyst": 30})
+
+    _call(client, budget)
+
+    client.with_options.assert_called_once_with(max_retries=0)
+    assert 29 < client.messages.create.call_args.kwargs["timeout"] <= 30
+
+
+def test_no_request_timeout_is_set_without_a_time_limit() -> None:
+    client = client_with(response(tool_use("submit", {})))
+
+    _call(client, CycleBudget())
+
+    assert "timeout" not in client.messages.create.call_args.kwargs
+
+
+def test_out_of_time_before_a_call_raises_without_calling_the_model() -> None:
+    client = client_with()
+    view = AgentBudget(cycle=CycleBudget(), agent="analyst", timeout_s=5, deadline=time.monotonic() - 1)
+
+    with pytest.raises(AgentTimeout):
+        _call(client, view)
+    client.messages.create.assert_not_called()
+
+
+def test_request_cut_off_by_the_agents_deadline_is_reported_as_agent_timeout() -> None:
+    client = client_with(api_error("timeout"))
+    # Deadline ~now: too close for a retry's backoff, as it is when a request runs into it.
+    view = Mock(spec=AgentBudget, agent="analyst", timeout_s=5, deadline=time.monotonic() + 0.1)
+    view.remaining_s.return_value = 0.1
+    view.timed_out.return_value = True  # the deadline passed while the request was in flight
+
+    with pytest.raises(AgentTimeout) as excinfo:
+        _call(client, view)
+    assert isinstance(excinfo.value.__cause__, anthropic.APITimeoutError)
+
+
+def test_retry_after_header_is_read_in_seconds_or_milliseconds() -> None:
+    assert _retry_after_s(api_error(429, headers={"retry-after": "12"})) == 12.0
+    assert _retry_after_s(api_error(429, headers={"retry-after-ms": "1500"})) == 1.5
+    assert _retry_after_s(api_error(429, headers={"retry-after": "Wed, 21 Oct 2026 07:28:00 GMT"})) is None
+    assert _retry_after_s(api_error(None)) is None
+
+
+def test_rate_limit_asking_to_wait_past_the_deadline_is_not_retried(no_sleep: None) -> None:
+    client = client_with(api_error(429, headers={"retry-after": "120"}), response(tool_use("submit", {})))
+    budget = CycleBudget(agent_timeout_s={"analyst": 30})
+
+    with pytest.raises(anthropic.RateLimitError):
+        _call(client, budget)
+    assert client.messages.create.call_count == 1
+
+
+def test_slow_tool_is_cut_off_and_reported_to_the_model(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(structured_module, "TOOL_TIMEOUT_S", 0.05)
+    release = threading.Event()
+    client = client_with(
+        response(tool_use("lookup", {})),
+        response(tool_use("submit", {"ok": True}, tool_id="tool_2")),
+    )
+
+    try:
+        result = _call(
+            client, CycleBudget(), tools=[LOOKUP_TOOL], tool_impls={"lookup": lambda: release.wait(5)}
+        )
+    finally:
+        release.set()
+
+    assert result == {"ok": True}
+    tool_result = client.messages.create.call_args_list[1].kwargs["messages"][2]["content"][0]
+    assert tool_result["is_error"] is True
+    assert "didn't return within" in tool_result["content"]
+
+
+def test_tool_timeout_never_exceeds_the_agents_remaining_time() -> None:
+    view = CycleBudget(agent_timeout_s={"analyst": 5}).for_agent("analyst")
+
+    assert structured_module._tool_timeout_s(view) <= 5
+    assert structured_module._tool_timeout_s(None) == structured_module.TOOL_TIMEOUT_S
+
+
+def test_tool_errors_still_propagate_from_the_worker_thread() -> None:
+    def boom():
+        raise ValueError("bad series")
+
+    with pytest.raises(ValueError, match="bad series"):
+        structured_module._run_tool(boom, {}, timeout_s=5)

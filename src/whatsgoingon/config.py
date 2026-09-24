@@ -58,6 +58,13 @@ AGENT_BUDGET_TOKENS: dict[str, int | None] = {
     "skeptic": _optional_number("WGO_SKEPTIC_BUDGET_TOKENS", 50_000, int),
     "editor": _optional_number("WGO_EDITOR_BUDGET_TOKENS", 100_000, int),
 }
+# Wall-clock seconds per agent turn (one role, one round), including retries. The Analyst gets
+# the most because it may run several research-tool iterations.
+AGENT_TIMEOUT_S: dict[str, float | None] = {
+    "analyst": _optional_number("WGO_ANALYST_TIMEOUT_S", 180.0, float),
+    "skeptic": _optional_number("WGO_SKEPTIC_TIMEOUT_S", 60.0, float),
+    "editor": _optional_number("WGO_EDITOR_TIMEOUT_S", 90.0, float),
+}
 
 # Optional: enables the search_news tool when set.
 NEWSAPI_KEY = os.getenv("NEWSAPI_KEY")

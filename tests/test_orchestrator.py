@@ -3,11 +3,12 @@ with what state, and that the round counter always ends the cycle."""
 
 from unittest.mock import Mock
 
+import anthropic
 import pytest
-from orchestrator_fakes import CPI_DELTA
+from orchestrator_fakes import CPI_DELTA, api_error
 
 import whatsgoingon.orchestrator.orchestrator as orchestrator_module
-from whatsgoingon.orchestrator.budget import BudgetExceeded, CycleBudget
+from whatsgoingon.orchestrator.budget import AgentTimeout, BudgetExceeded, CycleBudget
 from whatsgoingon.orchestrator.orchestrator import run_debate_cycle
 from whatsgoingon.orchestrator.state import Critique, DebateState, Draft, EditorDecision
 
@@ -217,3 +218,49 @@ def test_everything_out_of_budget_after_round_one_still_publishes(agents: dict[s
     assert [f.agent for f in state.fallbacks] == ["analyst", "editor"]
     assert "analyst" in state.decision.changelog
     assert "editor" in state.decision.changelog
+
+
+# --- timeouts and API errors take the same fallback paths ---
+
+
+def test_skeptic_api_failure_publishes_without_critique_and_says_so(agents: dict[str, Mock]) -> None:
+    agents["critique_draft"].side_effect = api_error(529)
+
+    state = _run()
+
+    assert "API error after retries (OverloadedError" in state.rounds[0].review_skipped
+    assert agents["decide"].call_args.kwargs["force_publish"] is True
+    [fallback] = state.fallbacks
+    assert (fallback.agent, fallback.action) == ("skeptic", "sent the draft to the editor without a review")
+
+
+def test_skeptic_timeout_publishes_without_critique(agents: dict[str, Mock]) -> None:
+    agents["critique_draft"].side_effect = AgentTimeout(agent="skeptic", timeout_s=60)
+
+    state = _run()
+
+    assert state.rounds[0].review_skipped == "skeptic didn't finish within its 60s time limit"
+    assert state.decision == PUBLISH
+
+
+def test_editor_api_failure_publishes_the_latest_draft_unedited(agents: dict[str, Mock]) -> None:
+    agents["decide"].side_effect = api_error(None)
+
+    state = _run()
+
+    assert state.decision.final_narrative == "draft 1"
+    assert "APIConnectionError" in state.decision.changelog
+
+
+def test_analyst_api_failure_before_a_first_draft_propagates(agents: dict[str, Mock]) -> None:
+    agents["produce_draft"].side_effect = api_error(400)
+
+    with pytest.raises(anthropic.BadRequestError):
+        _run()
+
+
+def test_bugs_are_not_dressed_up_as_fallbacks(agents: dict[str, Mock]) -> None:
+    agents["critique_draft"].side_effect = KeyError("severity")
+
+    with pytest.raises(KeyError):
+        _run()

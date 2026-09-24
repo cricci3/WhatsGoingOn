@@ -69,9 +69,9 @@ changelog di cosa è cambiato e perché).
 ### Settimana 2 — Concorrenza, budget, fallimenti
 - [ ] `asyncio` dove ha senso far girare agenti in parallelo (es. Skeptic + un quarto
       agente "Context" che cerca news mentre l'Analyst pensa)
-- [ ] Budget per-agente e per-ciclo (token/costo), con fallback esplicito invece di
+- [x] Budget per-agente e per-ciclo (token/costo), con fallback esplicito invece di
       fallire silenziosamente
-- [ ] Timeout e retry per agente (estende `retry.py`) con degradazione controllata
+- [x] Timeout e retry per agente (estende `retry.py`) con degradazione controllata
       (es. Editor pubblica senza critica se lo Skeptic non risponde, e lo segnala)
 - [x] Test che mockano ogni agente separatamente e verificano l'orchestrazione, non
       solo l'output finale

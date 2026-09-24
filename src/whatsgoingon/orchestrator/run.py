@@ -9,6 +9,7 @@ import anthropic
 from whatsgoingon.agent.state import compute_deltas
 from whatsgoingon.config import (
     AGENT_BUDGET_TOKENS,
+    AGENT_TIMEOUT_S,
     ANALYST_MODEL,
     ANTHROPIC_API_KEY,
     ANTHROPIC_WORKSPACE_ID,
@@ -17,19 +18,20 @@ from whatsgoingon.config import (
     SKEPTIC_MODEL,
 )
 from whatsgoingon.logging_config import configure_logging
-from whatsgoingon.orchestrator.budget import BudgetExceeded, CycleBudget
-from whatsgoingon.orchestrator.orchestrator import DEFAULT_MAX_ROUNDS, run_debate_cycle
+from whatsgoingon.orchestrator.budget import CycleBudget
+from whatsgoingon.orchestrator.orchestrator import AGENT_FAILURES, DEFAULT_MAX_ROUNDS, run_debate_cycle
 from whatsgoingon.orchestrator.state import DebateState, format_draft, format_fallbacks, format_review
 
 logger = logging.getLogger(__name__)
 
 
 def build_budget(*, max_cost_usd: float | None = CYCLE_BUDGET_USD) -> CycleBudget:
-    """The cycle budget from config (WGO_CYCLE_BUDGET_USD, WGO_<ROLE>_BUDGET_TOKENS), with an
-    optional override of the cycle's cost cap (None: no cap)."""
+    """The cycle budget from config (WGO_CYCLE_BUDGET_USD, WGO_<ROLE>_BUDGET_TOKENS,
+    WGO_<ROLE>_TIMEOUT_S), with an optional override of the cycle's cost cap (None: no cap)."""
     return CycleBudget(
         max_cost_usd=max_cost_usd,
         agent_max_tokens={agent: limit for agent, limit in AGENT_BUDGET_TOKENS.items() if limit is not None},
+        agent_timeout_s={agent: limit for agent, limit in AGENT_TIMEOUT_S.items() if limit is not None},
     )
 
 
@@ -134,8 +136,8 @@ def main(argv: list[str] | None = None) -> int:
     budget = build_budget() if args.budget_usd is None else build_budget(max_cost_usd=args.budget_usd or None)
     try:
         state = run_debate(month=args.month, max_rounds=args.max_rounds, budget=budget)
-    except BudgetExceeded as exc:
-        # Only reachable when the Analyst runs out before a first draft: nothing to publish.
+    except AGENT_FAILURES as exc:
+        # Only reachable when the Analyst fails before a first draft: nothing to publish.
         print(f"Debate aborted, nothing published: {exc}")
         print(format_spend(budget))
         return 1

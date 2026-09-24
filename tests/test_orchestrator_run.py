@@ -2,7 +2,7 @@ import json
 import logging
 
 import pytest
-from orchestrator_fakes import CPI_DELTA
+from orchestrator_fakes import CPI_DELTA, api_error
 
 import whatsgoingon.orchestrator.run as run_module
 from whatsgoingon.config import _optional_number
@@ -69,11 +69,13 @@ def test_transcript_of_a_clean_cycle_has_no_fallbacks_section() -> None:
 
 def test_build_budget_uses_the_configured_limits(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(run_module, "AGENT_BUDGET_TOKENS", {"analyst": 10, "skeptic": None, "editor": 30})
+    monkeypatch.setattr(run_module, "AGENT_TIMEOUT_S", {"analyst": None, "skeptic": 5.0, "editor": None})
 
     budget = run_module.build_budget(max_cost_usd=0.25)
 
     assert budget.max_cost_usd == 0.25
     assert budget.agent_max_tokens == {"analyst": 10, "editor": 30}
+    assert budget.agent_timeout_s == {"skeptic": 5.0}
 
 
 def test_main_reports_a_debate_that_ran_out_of_budget_before_any_draft(
@@ -86,6 +88,19 @@ def test_main_reports_a_debate_that_ran_out_of_budget_before_any_draft(
     monkeypatch.setattr(run_module, "configure_logging", lambda: None)
 
     assert run_module.main(["--month", "2026-08", "--budget-usd", "0.01"]) == 1
+    assert "nothing published" in capsys.readouterr().out
+
+
+def test_main_reports_an_api_failure_before_any_draft(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture
+) -> None:
+    def run_debate(**kwargs):
+        raise api_error(529)
+
+    monkeypatch.setattr(run_module, "run_debate", run_debate)
+    monkeypatch.setattr(run_module, "configure_logging", lambda: None)
+
+    assert run_module.main(["--month", "2026-08"]) == 1
     assert "nothing published" in capsys.readouterr().out
 
 
