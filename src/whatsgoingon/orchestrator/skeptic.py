@@ -4,6 +4,7 @@ import anthropic
 
 from whatsgoingon.agent.state import format_deltas
 from whatsgoingon.logging_config import agent_logger
+from whatsgoingon.orchestrator.budget import AgentBudget
 from whatsgoingon.orchestrator.state import Critique, Draft
 from whatsgoingon.orchestrator.structured import call_structured
 
@@ -74,6 +75,7 @@ def critique_draft(
     *,
     model: str,
     draft: Draft,
+    budget: AgentBudget | None = None,
 ) -> list[Critique]:
     """Review `draft` for unsupported claims, hasty causality, and inflated confidence,
     returning one Critique per issue found, each tagged to the claim_id it targets. An
@@ -85,7 +87,8 @@ def critique_draft(
     not the arithmetic itself, and never re-queries or re-derives a delta on its own.
 
     No research tools: the Skeptic judges the draft against the data it cites, nothing else.
-    Critiques targeting a claim id that isn't in the draft are dropped and logged.
+    Critiques targeting a claim id that isn't in the draft are dropped and logged. Raises
+    BudgetExceeded if `budget` runs out first.
     """
     log = agent_logger(__name__, agent="skeptic")
     claim_ids = [claim.id for claim in draft.claims]
@@ -96,6 +99,7 @@ def critique_draft(
         user_message=build_user_message(draft),
         output_tool=_submit_critiques_tool(claim_ids),
         log=log,
+        budget=budget,
     )
 
     critiques = []

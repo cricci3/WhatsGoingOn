@@ -3,7 +3,14 @@ from __future__ import annotations
 import anthropic
 
 from whatsgoingon.logging_config import agent_logger
-from whatsgoingon.orchestrator.state import DebateState, EditorDecision, format_critiques, format_draft
+from whatsgoingon.orchestrator.budget import AgentBudget
+from whatsgoingon.orchestrator.state import (
+    DebateState,
+    EditorDecision,
+    format_draft,
+    format_fallbacks,
+    format_review,
+)
 from whatsgoingon.orchestrator.structured import call_structured
 
 SYSTEM_PROMPT = """You are the Editor in a three-agent macro newsroom (Analyst, Skeptic, Editor). \
@@ -51,13 +58,22 @@ def build_user_message(state: DebateState, *, forced: bool) -> str:
             f"\n=== Round {number}: Analyst draft ===",
             format_draft(debate_round.draft),
             f"\n=== Round {number}: Skeptic critiques ===",
-            format_critiques(debate_round.critiques),
+            format_review(debate_round),
         ]
         if debate_round.editor_decision is not None:
             parts += [f"\n=== Round {number}: you sent it back ===", debate_round.editor_decision.reason]
+    if state.fallbacks:
+        parts += [
+            "\n=== The cycle ran degraded ===",
+            format_fallbacks(state.fallbacks),
+            "Say so in the changelog - e.g. that a draft went out without the Skeptic's review.",
+        ]
     if forced:
+        why = (
+            "the cycle ran degraded" if state.fallbacks else f"this was the last of {state.max_rounds} rounds"
+        )
         parts.append(
-            f"\nThis was the last of {state.max_rounds} rounds: you must publish now. Call out any "
+            f"\nNo more rounds ({why}): you must publish now. Call out any "
             "unresolved high-severity critique in the changelog."
         )
     else:
@@ -70,19 +86,23 @@ def decide(
     *,
     model: str,
     state: DebateState,
+    force_publish: bool = False,
+    budget: AgentBudget | None = None,
 ) -> EditorDecision:
     """Decide whether to publish state.latest_draft - producing the final narrative text
     and a changelog of what changed across rounds and why - or send it back for another
     Analyst/Skeptic round. Called once state.max_rounds is hit even if blocking critiques
     remain, so the orchestrator is guaranteed to terminate with a published narrative.
 
-    Once max_rounds is used up, "revise" is removed from the tool schema itself rather than
-    only discouraged in the prompt. If a publish decision comes back without a final
-    narrative, the latest draft is published unedited (and logged).
+    Once max_rounds is used up (or with force_publish, which the orchestrator sets after a
+    budget fallback), "revise" is removed from the tool schema itself rather than only
+    discouraged in the prompt. If a publish decision comes back without a final narrative,
+    the latest draft is published unedited (and logged). Raises BudgetExceeded if `budget`
+    runs out first.
     """
     if state.latest_draft is None:
         raise ValueError("decide() needs at least one completed round")
-    forced = len(state.rounds) >= state.max_rounds
+    forced = force_publish or len(state.rounds) >= state.max_rounds
     log = agent_logger(__name__, agent="editor", month=state.month, round=len(state.rounds))
     output = call_structured(
         client,
@@ -91,6 +111,7 @@ def decide(
         user_message=build_user_message(state, forced=forced),
         output_tool=_submit_decision_tool(allow_revise=not forced),
         log=log,
+        budget=budget,
     )
 
     action = "publish" if forced else output.get("action", "publish")

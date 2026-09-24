@@ -8,12 +8,13 @@ import anthropic
 
 from whatsgoingon.agent.tools import build_tool_implementations, build_tools
 from whatsgoingon.logging_config import agent_logger
+from whatsgoingon.orchestrator.budget import AgentBudget
 from whatsgoingon.orchestrator.state import (
     Claim,
     DebateState,
     Draft,
-    format_critiques,
     format_draft,
+    format_review,
 )
 from whatsgoingon.orchestrator.structured import call_structured
 
@@ -85,7 +86,7 @@ def build_user_message(state: DebateState) -> str:
             f"\nThis is round {state.round_number} of at most {state.max_rounds}. Your previous draft:",
             format_draft(last.draft),
             "\nThe Skeptic's critiques of it:",
-            format_critiques(last.critiques),
+            format_review(last),
         ]
         if last.editor_decision is not None:
             parts += ["\nThe Editor sent it back for another round:", last.editor_decision.reason]
@@ -102,6 +103,7 @@ def produce_draft(
     state: DebateState,
     tools: Sequence[dict] | None = None,
     tool_impls: Mapping[str, Callable[..., Any]] | None = None,
+    budget: AgentBudget | None = None,
 ) -> Draft:
     """Write a new draft (round 1, off state.deltas) or revise the latest one in light of
     state.latest_critiques (later rounds). Tags each numeric/causal assertion as a Claim,
@@ -114,7 +116,8 @@ def produce_draft(
 
     The model only names series; the SeriesDelta objects are looked up here, so a claim can
     never cite a number that isn't in state.deltas (unknown names are dropped and logged).
-    `tools`/`tool_impls` default to the Phase 1 agent's research tools.
+    `tools`/`tool_impls` default to the Phase 1 agent's research tools. Raises BudgetExceeded
+    if `budget` runs out before the draft is submitted.
     """
     log = agent_logger(__name__, agent="analyst", month=state.month, round=state.round_number)
     if tools is None:
@@ -132,6 +135,7 @@ def produce_draft(
         log=log,
         tools=tools,
         tool_impls=tool_impls,
+        budget=budget,
     )
 
     claims = []

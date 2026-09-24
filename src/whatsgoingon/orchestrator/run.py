@@ -8,24 +8,39 @@ import anthropic
 
 from whatsgoingon.agent.state import compute_deltas
 from whatsgoingon.config import (
+    AGENT_BUDGET_TOKENS,
     ANALYST_MODEL,
     ANTHROPIC_API_KEY,
     ANTHROPIC_WORKSPACE_ID,
+    CYCLE_BUDGET_USD,
     EDITOR_MODEL,
     SKEPTIC_MODEL,
 )
 from whatsgoingon.logging_config import configure_logging
+from whatsgoingon.orchestrator.budget import BudgetExceeded, CycleBudget
 from whatsgoingon.orchestrator.orchestrator import DEFAULT_MAX_ROUNDS, run_debate_cycle
-from whatsgoingon.orchestrator.state import DebateState, format_critiques, format_draft
+from whatsgoingon.orchestrator.state import DebateState, format_draft, format_fallbacks, format_review
 
 logger = logging.getLogger(__name__)
 
 
-def run_debate(*, month: str, max_rounds: int = DEFAULT_MAX_ROUNDS) -> DebateState:
+def build_budget(*, max_cost_usd: float | None = CYCLE_BUDGET_USD) -> CycleBudget:
+    """The cycle budget from config (WGO_CYCLE_BUDGET_USD, WGO_<ROLE>_BUDGET_TOKENS), with an
+    optional override of the cycle's cost cap (None: no cap)."""
+    return CycleBudget(
+        max_cost_usd=max_cost_usd,
+        agent_max_tokens={agent: limit for agent, limit in AGENT_BUDGET_TOKENS.items() if limit is not None},
+    )
+
+
+def run_debate(
+    *, month: str, max_rounds: int = DEFAULT_MAX_ROUNDS, budget: CycleBudget | None = None
+) -> DebateState:
     """Compute the shared delta snapshot once and run one Analyst/Skeptic/Editor cycle over it.
 
     Unlike the Phase 1 run_cycle(), nothing is written to the NarrativeStore yet, so running
-    this never overwrites the single-agent narrative for the same month."""
+    this never overwrites the single-agent narrative for the same month. `budget` defaults to
+    build_budget(), i.e. the limits configured in the environment."""
     if not ANTHROPIC_API_KEY:
         raise RuntimeError("ANTHROPIC_API_KEY not set; add it to .env")
 
@@ -44,6 +59,7 @@ def run_debate(*, month: str, max_rounds: int = DEFAULT_MAX_ROUNDS) -> DebateSta
         skeptic_model=SKEPTIC_MODEL,
         editor_model=EDITOR_MODEL,
         max_rounds=max_rounds,
+        budget=budget or build_budget(),
     )
 
 
@@ -56,7 +72,7 @@ def format_transcript(state: DebateState) -> str:
             f"\n## Round {number} - Analyst draft\n",
             format_draft(debate_round.draft),
             f"\n## Round {number} - Skeptic critiques\n",
-            format_critiques(debate_round.critiques),
+            format_review(debate_round),
         ]
         if debate_round.editor_decision is not None:
             parts += [f"\n## Round {number} - Editor sent it back\n", debate_round.editor_decision.reason]
@@ -69,7 +85,23 @@ def format_transcript(state: DebateState) -> str:
             "\n## Changelog\n",
             state.decision.changelog or "",
         ]
+    if state.fallbacks:
+        parts += ["\n## Fallbacks (the cycle ran degraded)\n", format_fallbacks(state.fallbacks)]
+    parts += ["\n## Spend\n", format_spend(state.budget)]
     return "\n".join(parts)
+
+
+def format_spend(budget: CycleBudget) -> str:
+    lines = []
+    for agent, spent in budget.spend.items():
+        limit = budget.agent_max_tokens.get(agent)
+        cap = f" of {limit:,}" if limit is not None else ""
+        lines.append(
+            f"- {agent}: {spent.calls} calls, {spent.total_tokens:,}{cap} tokens, ~${spent.cost_usd:.4f}"
+        )
+    cap = f" of ${budget.max_cost_usd:.2f}" if budget.max_cost_usd is not None else ""
+    lines.append(f"- cycle: {budget.total_tokens:,} tokens, ~${budget.cost_usd:.4f}{cap}")
+    return "\n".join(lines)
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -87,13 +119,26 @@ def main(argv: list[str] | None = None) -> int:
         default=DEFAULT_MAX_ROUNDS,
         help=f"Max Analyst/Skeptic rounds before the Editor must publish (default {DEFAULT_MAX_ROUNDS})",
     )
+    parser.add_argument(
+        "--budget-usd",
+        type=float,
+        default=None,
+        help="Cost cap for this cycle in USD, overriding WGO_CYCLE_BUDGET_USD (0 disables it)",
+    )
     args = parser.parse_args(argv)
 
     # JSON logs on stderr (per-agent model calls, tool calls, tokens, decisions); the
     # readable transcript on stdout, so the two can be redirected separately.
     configure_logging()
 
-    state = run_debate(month=args.month, max_rounds=args.max_rounds)
+    budget = build_budget() if args.budget_usd is None else build_budget(max_cost_usd=args.budget_usd or None)
+    try:
+        state = run_debate(month=args.month, max_rounds=args.max_rounds, budget=budget)
+    except BudgetExceeded as exc:
+        # Only reachable when the Analyst runs out before a first draft: nothing to publish.
+        print(f"Debate aborted, nothing published: {exc}")
+        print(format_spend(budget))
+        return 1
     print(format_transcript(state))
     return 0
 

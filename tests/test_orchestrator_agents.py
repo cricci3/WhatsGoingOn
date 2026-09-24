@@ -14,6 +14,7 @@ from whatsgoingon.orchestrator.state import (
     DebateState,
     Draft,
     EditorDecision,
+    Fallback,
 )
 
 MODEL = "claude-haiku-4-5"
@@ -189,6 +190,31 @@ def test_editor_cannot_revise_once_max_rounds_is_used_up() -> None:
     assert "must publish now" in kwargs["messages"][0]["content"]
     assert decision.action == "publish"
     assert decision.final_narrative == "Oil drove CPI up."  # fell back to the latest draft
+
+
+def test_editor_force_publish_removes_revise_before_max_rounds() -> None:
+    client = client_with(response(tool_use("submit_decision", {"action": "publish", "reason": "ok"})))
+
+    decide(client, model=MODEL, state=_state_with_rounds(1, max_rounds=3), force_publish=True)
+
+    kwargs = client.messages.create.call_args.kwargs
+    assert kwargs["tools"][-1]["input_schema"]["properties"]["action"]["enum"] == ["publish"]
+
+
+def test_editor_is_told_about_unreviewed_drafts_and_fallbacks() -> None:
+    state = _state()
+    state.rounds.append(DebateRound(draft=_draft(), critiques=[], review_skipped="skeptic out of tokens"))
+    state.fallbacks.append(
+        Fallback(agent="skeptic", round=1, reason="skeptic out of tokens", action="sent it unreviewed")
+    )
+    client = client_with(response(tool_use("submit_decision", {"action": "publish", "reason": "ok"})))
+
+    decide(client, model=MODEL, state=state, force_publish=True)
+
+    message = client.messages.create.call_args.kwargs["messages"][0]["content"]
+    assert "NOT REVIEWED - skeptic out of tokens" in message
+    assert "The cycle ran degraded" in message
+    assert "sent it unreviewed" in message
 
 
 def test_editor_requires_a_completed_round() -> None:

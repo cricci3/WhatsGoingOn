@@ -4,6 +4,7 @@ from dataclasses import dataclass, field
 from typing import Literal
 
 from whatsgoingon.agent.state import SeriesDelta, format_deltas
+from whatsgoingon.orchestrator.budget import CycleBudget
 
 
 @dataclass(frozen=True)
@@ -49,11 +50,15 @@ class DebateRound:
 
     editor_decision is set only when the Editor reviewed this round and sent it back
     ("revise"), so the Analyst's next draft can see why; the publishing decision lives on
-    DebateState.decision instead."""
+    DebateState.decision instead.
+
+    review_skipped is set (to the reason) when the Skeptic couldn't review this draft, e.g.
+    its budget ran out - so an empty critiques list is never mistaken for "the draft held up"."""
 
     draft: Draft
     critiques: list[Critique]
     editor_decision: EditorDecision | None = None
+    review_skipped: str | None = None
 
 
 @dataclass(frozen=True)
@@ -67,6 +72,18 @@ class EditorDecision:
     changelog: str | None = None  # set only when action == "publish"
 
 
+@dataclass(frozen=True)
+class Fallback:
+    """A degradation the orchestrator applied instead of failing: which agent couldn't do its
+    part, in which round, why, and what happened instead. Kept on DebateState and shown in the
+    transcript and the Editor's prompt, so a degraded cycle is always visibly degraded."""
+
+    agent: str
+    round: int
+    reason: str
+    action: str
+
+
 @dataclass
 class DebateState:
     """Shared state threaded through the orchestrator across rounds - the message-passing
@@ -76,13 +93,18 @@ class DebateState:
     deltas is computed once (agent/state.py's compute_deltas(), same as the Phase 1 agent) and
     passed by reference here rather than recomputed per agent, so Analyst, Skeptic, and Editor
     all reason about the exact same data snapshot for the whole cycle - no drift between an
-    as_of used in round 1 and a slightly different one in round 2."""
+    as_of used in round 1 and a slightly different one in round 2.
+
+    budget carries the cycle's spending limits and running spend; fallbacks records every
+    degradation applied when a limit was hit."""
 
     month: str
     deltas: list[SeriesDelta]
     max_rounds: int
     rounds: list[DebateRound] = field(default_factory=list)
     decision: EditorDecision | None = None
+    budget: CycleBudget = field(default_factory=CycleBudget)
+    fallbacks: list[Fallback] = field(default_factory=list)
 
     @property
     def delta_summary(self) -> str:
@@ -125,3 +147,14 @@ def format_critiques(critiques: list[Critique]) -> str:
     if not critiques:
         return "(no critiques)"
     return "\n".join(f"- [{c.claim_id}] {c.severity}: {c.comment}" for c in critiques)
+
+
+def format_review(debate_round: DebateRound) -> str:
+    """The Skeptic's side of a round: its critiques, or why there aren't any."""
+    if debate_round.review_skipped is not None:
+        return f"(NOT REVIEWED - {debate_round.review_skipped})"
+    return format_critiques(debate_round.critiques)
+
+
+def format_fallbacks(fallbacks: list[Fallback]) -> str:
+    return "\n".join(f"- round {f.round}, {f.agent}: {f.reason} -> {f.action}" for f in fallbacks)

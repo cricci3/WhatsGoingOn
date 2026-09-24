@@ -7,6 +7,8 @@ from typing import Any
 
 import anthropic
 
+from whatsgoingon.orchestrator.budget import AgentBudget
+
 DEFAULT_MAX_ITERATIONS = 6
 DEFAULT_MAX_TOKENS = 4096
 
@@ -23,6 +25,7 @@ def call_structured(
     tool_impls: Mapping[str, Callable[..., Any]] | None = None,
     max_tokens: int = DEFAULT_MAX_TOKENS,
     max_iterations: int = DEFAULT_MAX_ITERATIONS,
+    budget: AgentBudget | None = None,
 ) -> dict[str, Any]:
     """Tool-calling loop whose final answer is structured data instead of prose: the agent
     may call research `tools` for a few iterations, and finishes by calling `output_tool`,
@@ -37,6 +40,9 @@ def call_structured(
 
     Every model call and tool call is logged through `log` with token counts, and a final
     per-call total is logged when the agent submits.
+
+    With a `budget`, it's checked before every model call (raising BudgetExceeded once it's
+    used up - the caller decides the fallback) and each call's usage is recorded into it.
     """
     tool_impls = tool_impls or {}
     output_name = output_tool["name"]
@@ -47,6 +53,8 @@ def call_structured(
     for iteration in range(1, max_iterations + 1):
         force_output = iteration == max_iterations or not tools
         tool_choice = {"type": "tool", "name": output_name} if force_output else {"type": "any"}
+        if budget is not None:
+            budget.check()
         response = client.messages.create(
             model=model,
             max_tokens=max_tokens,
@@ -57,6 +65,13 @@ def call_structured(
         )
         input_tokens += response.usage.input_tokens
         output_tokens += response.usage.output_tokens
+        spent = None
+        if budget is not None:
+            spent = budget.record(
+                model=model,
+                input_tokens=response.usage.input_tokens,
+                output_tokens=response.usage.output_tokens,
+            )
         log.info(
             "agent model call",
             extra={
@@ -65,6 +80,7 @@ def call_structured(
                 "stop_reason": response.stop_reason,
                 "input_tokens": response.usage.input_tokens,
                 "output_tokens": response.usage.output_tokens,
+                **({"agent_cost_usd": round(spent.cost_usd, 6)} if spent is not None else {}),
             },
         )
         messages.append({"role": "assistant", "content": response.content})
