@@ -5,10 +5,13 @@ import pytest
 from orchestrator_fakes import CPI_DELTA, OIL_DELTA, client_with, response, tool_use
 
 from whatsgoingon.orchestrator.analyst import produce_draft
+from whatsgoingon.orchestrator.context import gather_context
 from whatsgoingon.orchestrator.editor import decide
 from whatsgoingon.orchestrator.skeptic import critique_draft
 from whatsgoingon.orchestrator.state import (
     Claim,
+    ContextBrief,
+    ContextEvent,
     Critique,
     DebateRound,
     DebateState,
@@ -220,3 +223,60 @@ def test_editor_is_told_about_unreviewed_drafts_and_fallbacks() -> None:
 def test_editor_requires_a_completed_round() -> None:
     with pytest.raises(ValueError):
         decide(client_with(), model=MODEL, state=_state())
+
+
+# --- Context ---
+
+BRIEF = ContextBrief(
+    events=[
+        ContextEvent(summary="OPEC announced output cuts.", related_series=["wti_oil"], source="Reuters")
+    ],
+    notes="No news found for cpi.",
+)
+
+
+def test_context_maps_events_and_drops_untracked_series() -> None:
+    submitted = {
+        "events": [{"summary": "OPEC cut.", "related_series": ["wti_oil", "gdp"], "source": "Reuters"}],
+        "notes": "nothing on cpi",
+    }
+    client = client_with(response(tool_use("submit_context", submitted)))
+
+    brief = gather_context(client, model=MODEL, state=_state(), tools=[], tool_impls={})
+
+    assert brief == ContextBrief(
+        events=[ContextEvent(summary="OPEC cut.", related_series=["wti_oil"], source="Reuters")],
+        notes="nothing on cpi",
+    )
+
+
+def test_context_default_tools_are_read_only() -> None:
+    client = client_with(response(tool_use("submit_context", {"events": []})))
+
+    gather_context(client, model=MODEL, state=_state())
+
+    names = [t["name"] for t in client.messages.create.call_args.kwargs["tools"]]
+    assert "fetch_fred_series" not in names  # writes to SQLite while the Analyst may be using it
+    assert {"get_ticker_news", "query_observations", "submit_context"} <= set(names)
+
+
+def test_skeptic_sees_the_context_briefing_when_given() -> None:
+    client = client_with(response(tool_use("submit_critiques", {"critiques": []})))
+
+    critique_draft(client, model=MODEL, draft=_draft(), context=BRIEF)
+
+    message = client.messages.create.call_args.kwargs["messages"][0]["content"]
+    assert "News briefing from the Context researcher" in message
+    assert "[wti_oil] OPEC announced output cuts. (source: Reuters)" in message
+    assert "Notes: No news found for cpi." in message
+
+
+def test_analyst_revision_includes_the_context_briefing() -> None:
+    state = _state()
+    state.context = BRIEF
+    state.rounds.append(DebateRound(draft=_draft(), critiques=[]))
+    client = _analyst_client(_submitted_draft())
+
+    produce_draft(client, model=MODEL, state=state, tools=[], tool_impls={})
+
+    assert "OPEC announced output cuts." in client.messages.create.call_args.kwargs["messages"][0]["content"]

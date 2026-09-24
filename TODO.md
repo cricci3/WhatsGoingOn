@@ -67,7 +67,7 @@ changelog di cosa è cambiato e perché).
 - [x] Un ciclo completo gira da CLI (`whatsgoingon-debate`): bozza + critica + finale, tutto tracciato
 
 ### Settimana 2 — Concorrenza, budget, fallimenti
-- [ ] `asyncio` dove ha senso far girare agenti in parallelo (es. Skeptic + un quarto
+- [x] `asyncio` dove ha senso far girare agenti in parallelo (es. Skeptic + un quarto
       agente "Context" che cerca news mentre l'Analyst pensa)
 - [x] Budget per-agente e per-ciclo (token/costo), con fallback esplicito invece di
       fallire silenziosamente

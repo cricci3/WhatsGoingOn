@@ -1,7 +1,10 @@
 from __future__ import annotations
 
+import asyncio
 import logging
+import time
 from dataclasses import asdict, replace
+from typing import Any
 
 import anthropic
 
@@ -9,6 +12,7 @@ from whatsgoingon.agent.state import SeriesDelta
 from whatsgoingon.logging_config import agent_logger
 from whatsgoingon.orchestrator.analyst import produce_draft
 from whatsgoingon.orchestrator.budget import AgentUnavailable, CycleBudget
+from whatsgoingon.orchestrator.context import gather_context
 from whatsgoingon.orchestrator.editor import decide
 from whatsgoingon.orchestrator.skeptic import critique_draft
 from whatsgoingon.orchestrator.state import (
@@ -26,7 +30,7 @@ DEFAULT_MAX_ROUNDS = 3
 AGENT_FAILURES = (AgentUnavailable, anthropic.APIError)
 
 
-def run_debate_cycle(
+async def run_debate_cycle(
     client: anthropic.Anthropic,
     *,
     month: str,
@@ -34,18 +38,28 @@ def run_debate_cycle(
     analyst_model: str,
     skeptic_model: str,
     editor_model: str,
+    context_model: str | None = None,
     max_rounds: int = DEFAULT_MAX_ROUNDS,
     budget: CycleBudget | None = None,
 ) -> DebateState:
-    """Sequential orchestration: Analyst drafts -> Skeptic critiques -> if the critiques
-    are blocking (high-severity) and rounds remain, Analyst revises and the cycle repeats
-    -> Editor decides to publish (or force-publishes once max_rounds is hit). The Editor
-    can also send a non-blocked draft back for another round while rounds remain.
+    """Analyst drafts -> Skeptic critiques -> if the critiques are blocking (high-severity)
+    and rounds remain, Analyst revises and the cycle repeats -> Editor decides to publish (or
+    force-publishes once max_rounds is hit). The Editor can also send a non-blocked draft back
+    for another round while rounds remain.
 
     Mirrors agent/loop.py's run_agent(): a plain loop over shared state, no framework,
     with the round counter as the mechanism that guarantees termination - at most
     max_rounds Analyst/Skeptic passes, and the pass that uses up the last round always
     ends in a published decision.
+
+    Concurrency: the agents are synchronous (sync Anthropic client, sync tools), so each runs
+    on a worker thread via asyncio.to_thread(), and asyncio only decides what overlaps. Almost
+    everything here is a strict chain - the Skeptic needs the draft, the Editor needs the
+    critiques - so the one place that runs in parallel is round 1: with a `context_model`, the
+    Context agent researches the news *while* the Analyst writes the first draft, and the
+    Skeptic starts once both are done - waiting max(analyst, context), not their sum. The
+    brief then goes to the Skeptic and to the Analyst's revisions. (The Analyst's first draft
+    doesn't see it - that's the price of running them side by side.)
 
     `deltas` is computed once by the caller (agent/state.py's compute_deltas()) and stored
     on the resulting DebateState as-is, so every agent in the cycle sees the same snapshot -
@@ -59,37 +73,64 @@ def run_debate_cycle(
     - Analyst, round 1: nothing to publish yet, so the error propagates to the caller;
     - Analyst, later rounds: the previous round's draft goes to the Editor as-is;
     - Skeptic: the draft goes to the Editor unreviewed (DebateRound.review_skipped);
-    - Editor: the latest draft is published unedited.
-    After any fallback no further rounds start: the next Editor pass must publish.
+    - Editor: the latest draft is published unedited;
+    - Context: the debate carries on without news context (it's an aid, not a step).
+    After an Analyst or Skeptic fallback no further rounds start: the next Editor pass must
+    publish.
     """
     if max_rounds < 1:
         raise ValueError("max_rounds must be at least 1")
     state = DebateState(month=month, deltas=deltas, max_rounds=max_rounds, budget=budget or CycleBudget())
+    must_publish = False
 
     for round_number in range(1, max_rounds + 1):
         log = agent_logger(__name__, agent="orchestrator", month=month, round=round_number)
         is_last_round = round_number == max_rounds
 
-        try:
-            draft = produce_draft(
-                client, model=analyst_model, state=state, budget=state.budget.for_agent("analyst")
+        analyst = _attempt(
+            produce_draft, client, model=analyst_model, state=state, budget=state.budget.for_agent("analyst")
+        )
+        if round_number == 1 and context_model is not None:
+            context = _attempt(
+                gather_context,
+                client,
+                model=context_model,
+                state=state,
+                budget=state.budget.for_agent("context"),
             )
-        except AGENT_FAILURES as exc:
+            started = time.monotonic()
+            (draft, analyst_exc, analyst_s), (brief, context_exc, context_s) = await asyncio.gather(
+                analyst, context
+            )
+            log.info(
+                "parallel phase finished",
+                extra={
+                    "agents": ["analyst", "context"],
+                    "wall_s": round(time.monotonic() - started, 2),
+                    "analyst_s": round(analyst_s, 2),
+                    "context_s": round(context_s, 2),
+                },
+            )
+            _take_context(state, log, brief, context_exc)
+        else:
+            draft, analyst_exc, _ = await analyst
+
+        if analyst_exc is not None:
             if not state.rounds:
                 log.error(
                     "analyst failed before a first draft; nothing to publish",
-                    extra={"error": _describe(exc), "budget": state.budget.summary()},
+                    extra={"error": _describe(analyst_exc), "budget": state.budget.summary()},
                 )
-                raise
+                raise analyst_exc
             _fall_back(
                 state,
                 log,
-                exc,
+                analyst_exc,
                 agent="analyst",
                 round_number=round_number,
                 action="published the previous round's draft without revising it",
             )
-            return _publish(client, state, log, editor_model=editor_model)
+            return await _publish(client, state, log, editor_model=editor_model)
         log.info(
             "analyst produced draft",
             extra={
@@ -99,17 +140,21 @@ def run_debate_cycle(
             },
         )
 
+        critiques, skeptic_exc, _ = await _attempt(
+            critique_draft,
+            client,
+            model=skeptic_model,
+            draft=draft,
+            context=state.context,
+            budget=state.budget.for_agent("skeptic"),
+        )
         review_skipped = None
-        try:
-            critiques = critique_draft(
-                client, model=skeptic_model, draft=draft, budget=state.budget.for_agent("skeptic")
-            )
-        except AGENT_FAILURES as exc:
-            critiques, review_skipped = [], _describe(exc)
+        if skeptic_exc is not None:
+            critiques, review_skipped, must_publish = [], _describe(skeptic_exc), True
             _fall_back(
                 state,
                 log,
-                exc,
+                skeptic_exc,
                 agent="skeptic",
                 round_number=round_number,
                 action="sent the draft to the editor without a review",
@@ -129,9 +174,9 @@ def run_debate_cycle(
             log.info("blocking critiques; sending draft back to the analyst without an editor pass")
             continue
 
-        if is_last_round or state.fallbacks:
-            return _publish(client, state, log, editor_model=editor_model)
-        decision = _editor_decision(client, state, log, editor_model=editor_model, force_publish=False)
+        if is_last_round or must_publish:
+            return await _publish(client, state, log, editor_model=editor_model)
+        decision = await _editor_decision(client, state, log, editor_model=editor_model, force_publish=False)
         if decision.action == "publish":
             return _finish(state, log, decision)
         state.rounds[-1] = replace(state.rounds[-1], editor_decision=decision)
@@ -139,15 +184,39 @@ def run_debate_cycle(
     raise AssertionError("unreachable: the last round always publishes")
 
 
-def _publish(
+async def _attempt(agent_fn: Any, /, *args: Any, **kwargs: Any) -> tuple[Any, Exception | None, float]:
+    """Run one (synchronous) agent call on a worker thread: (result, None, seconds) on
+    success, (None, error, seconds) on an AGENT_FAILURES error. Returning the error instead of
+    raising lets asyncio.gather() hand back both halves of the parallel phase even when one
+    fails, and leaves the fallback decision to the loop. Any other exception propagates."""
+    started = time.monotonic()
+    try:
+        result = await asyncio.to_thread(agent_fn, *args, **kwargs)
+    except AGENT_FAILURES as exc:
+        return None, exc, time.monotonic() - started
+    return result, None, time.monotonic() - started
+
+
+def _take_context(state: DebateState, log: logging.LoggerAdapter, brief: Any, exc: Exception | None) -> None:
+    if exc is not None:
+        _fall_back(state, log, exc, agent="context", round_number=1, action="carried on without news context")
+        return
+    state.context = brief
+    log.info(
+        "context gathered",
+        extra={"speaker": "context", "events": [asdict(e) for e in brief.events], "notes": brief.notes},
+    )
+
+
+async def _publish(
     client: anthropic.Anthropic, state: DebateState, log: logging.LoggerAdapter, *, editor_model: str
 ) -> DebateState:
     """Final Editor pass, where "revise" is no longer an option."""
-    decision = _editor_decision(client, state, log, editor_model=editor_model, force_publish=True)
+    decision = await _editor_decision(client, state, log, editor_model=editor_model, force_publish=True)
     return _finish(state, log, decision)
 
 
-def _editor_decision(
+async def _editor_decision(
     client: anthropic.Anthropic,
     state: DebateState,
     log: logging.LoggerAdapter,
@@ -155,15 +224,15 @@ def _editor_decision(
     editor_model: str,
     force_publish: bool,
 ) -> EditorDecision:
-    try:
-        decision = decide(
-            client,
-            model=editor_model,
-            state=state,
-            force_publish=force_publish,
-            budget=state.budget.for_agent("editor"),
-        )
-    except AGENT_FAILURES as exc:
+    decision, exc, _ = await _attempt(
+        decide,
+        client,
+        model=editor_model,
+        state=state,
+        force_publish=force_publish,
+        budget=state.budget.for_agent("editor"),
+    )
+    if exc is not None:
         _fall_back(
             state,
             log,

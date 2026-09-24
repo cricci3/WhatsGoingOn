@@ -1,6 +1,8 @@
 """Orchestration logic with each agent mocked separately: who gets called, in what order,
 with what state, and that the round counter always ends the cycle."""
 
+import asyncio
+import threading
 from unittest.mock import Mock
 
 import anthropic
@@ -10,8 +12,16 @@ from orchestrator_fakes import CPI_DELTA, api_error
 import whatsgoingon.orchestrator.orchestrator as orchestrator_module
 from whatsgoingon.orchestrator.budget import AgentTimeout, BudgetExceeded, CycleBudget
 from whatsgoingon.orchestrator.orchestrator import run_debate_cycle
-from whatsgoingon.orchestrator.state import Critique, DebateState, Draft, EditorDecision
+from whatsgoingon.orchestrator.state import (
+    ContextBrief,
+    ContextEvent,
+    Critique,
+    DebateState,
+    Draft,
+    EditorDecision,
+)
 
+BRIEF = ContextBrief(events=[ContextEvent(summary="OPEC cut output.", related_series=["cpi"])])
 HIGH = Critique(claim_id="c1", severity="high", comment="Unsupported.")
 LOW = Critique(claim_id="c1", severity="low", comment="Nitpick.")
 PUBLISH = EditorDecision(action="publish", reason="ok", final_narrative="Final.", changelog="none")
@@ -28,22 +38,28 @@ def agents(monkeypatch: pytest.MonkeyPatch) -> dict[str, Mock]:
         "produce_draft": Mock(side_effect=[_draft(n) for n in range(1, 10)]),
         "critique_draft": Mock(return_value=[]),
         "decide": Mock(return_value=PUBLISH),
+        "gather_context": Mock(return_value=BRIEF),
     }
     for name, mock in mocks.items():
         monkeypatch.setattr(orchestrator_module, name, mock)
     return mocks
 
 
-def _run(max_rounds: int = 3, budget: CycleBudget | None = None) -> DebateState:
-    return run_debate_cycle(
-        Mock(),
-        month="2026-08",
-        deltas=[CPI_DELTA],
-        analyst_model="analyst-model",
-        skeptic_model="skeptic-model",
-        editor_model="editor-model",
-        max_rounds=max_rounds,
-        budget=budget,
+def _run(
+    max_rounds: int = 3, budget: CycleBudget | None = None, context_model: str | None = None
+) -> DebateState:
+    return asyncio.run(
+        run_debate_cycle(
+            Mock(),
+            month="2026-08",
+            deltas=[CPI_DELTA],
+            analyst_model="analyst-model",
+            skeptic_model="skeptic-model",
+            editor_model="editor-model",
+            context_model=context_model,
+            max_rounds=max_rounds,
+            budget=budget,
+        )
     )
 
 
@@ -264,3 +280,82 @@ def test_bugs_are_not_dressed_up_as_fallbacks(agents: dict[str, Mock]) -> None:
 
     with pytest.raises(KeyError):
         _run()
+
+
+# --- Context agent, in parallel with the first draft ---
+
+
+def test_context_agent_is_not_run_without_a_context_model(agents: dict[str, Mock]) -> None:
+    state = _run()
+
+    agents["gather_context"].assert_not_called()
+    assert state.context is None
+    assert agents["critique_draft"].call_args.kwargs["context"] is None
+
+
+def test_context_runs_at_the_same_time_as_the_first_draft(agents: dict[str, Mock]) -> None:
+    # Each side waits for the other at the barrier: this only completes if both agent calls
+    # are in flight at once - run one after the other, the barrier times out and breaks.
+    barrier = threading.Barrier(2, timeout=5)
+
+    def produce_draft(client, **kwargs):
+        barrier.wait()
+        return _draft(1)
+
+    def gather_context(client, **kwargs):
+        barrier.wait()
+        return BRIEF
+
+    agents["produce_draft"].side_effect = produce_draft
+    agents["gather_context"].side_effect = gather_context
+
+    state = _run(context_model="context-model")
+
+    assert state.context == BRIEF
+    assert agents["gather_context"].call_args.kwargs["model"] == "context-model"
+    assert agents["gather_context"].call_args.kwargs["budget"].agent == "context"
+
+
+def test_context_is_gathered_once_and_reaches_the_skeptic_and_the_revisions(agents: dict[str, Mock]) -> None:
+    seen_context = []
+
+    def produce_draft(client, *, model, state, budget):
+        seen_context.append(state.context)
+        return _draft(len(seen_context))
+
+    agents["produce_draft"].side_effect = produce_draft
+    agents["critique_draft"].side_effect = [[HIGH], []]
+
+    _run(context_model="context-model")
+
+    assert agents["gather_context"].call_count == 1
+    assert seen_context == [None, BRIEF]  # the first draft is written before the brief exists
+    assert all(c.kwargs["context"] == BRIEF for c in agents["critique_draft"].call_args_list)
+
+
+def test_context_failure_is_recorded_but_does_not_end_the_debate(agents: dict[str, Mock]) -> None:
+    agents["gather_context"].side_effect = api_error(529)
+    agents["decide"].side_effect = [REVISE, PUBLISH]
+
+    state = _run(context_model="context-model")
+
+    assert state.context is None
+    assert [(f.agent, f.action) for f in state.fallbacks] == [("context", "carried on without news context")]
+    assert len(state.rounds) == 2  # the editor could still ask for another round
+    assert agents["decide"].call_args_list[0].kwargs["force_publish"] is False
+    assert state.decision == PUBLISH
+
+
+def test_analyst_failure_in_round_one_still_raises_when_context_succeeds(agents: dict[str, Mock]) -> None:
+    agents["produce_draft"].side_effect = _out_of_budget("analyst")
+
+    with pytest.raises(BudgetExceeded):
+        _run(context_model="context-model")
+    agents["critique_draft"].assert_not_called()
+
+
+def test_bug_in_the_context_agent_is_not_swallowed(agents: dict[str, Mock]) -> None:
+    agents["gather_context"].side_effect = KeyError("events")
+
+    with pytest.raises(KeyError):
+        _run(context_model="context-model")

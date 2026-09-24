@@ -5,7 +5,7 @@ import anthropic
 from whatsgoingon.agent.state import format_deltas
 from whatsgoingon.logging_config import agent_logger
 from whatsgoingon.orchestrator.budget import AgentBudget
-from whatsgoingon.orchestrator.state import Critique, Draft
+from whatsgoingon.orchestrator.state import ContextBrief, Critique, Draft, format_context
 from whatsgoingon.orchestrator.structured import call_structured
 
 SYSTEM_PROMPT = """You are the Skeptic in a three-agent macro newsroom (Analyst, Skeptic, Editor). \
@@ -22,6 +22,11 @@ Severity:
 - high: misleading or wrong enough that it shouldn't be published as-is;
 - medium: should be qualified or softened, but the point stands;
 - low: minor nitpick.
+
+You may also get a news briefing that a separate Context researcher gathered independently. Use \
+it for causal claims: a claim consistent with a reported event is better supported than bare \
+co-movement, one the reported events contradict is worse. Don't penalise a claim just because the \
+briefing doesn't mention it - it isn't exhaustive.
 
 Don't critique style or length. Raise at most one critique per issue, targeted at one claim id. \
 If the draft holds up, submit an empty list - pushing back for its own sake isn't useful.
@@ -57,7 +62,7 @@ def _submit_critiques_tool(claim_ids: list[str]) -> dict:
     }
 
 
-def build_user_message(draft: Draft) -> str:
+def build_user_message(draft: Draft, context: ContextBrief | None = None) -> str:
     parts = ["Narrative:", draft.narrative, "", "Claims, each with the data it rests on:"]
     for claim in draft.claims:
         parts.append(
@@ -67,6 +72,8 @@ def build_user_message(draft: Draft) -> str:
             parts.append(format_deltas(claim.supporting_deltas))
         else:
             parts.append("(no supporting data)")
+    if context is not None:
+        parts += ["\nNews briefing from the Context researcher:", format_context(context)]
     return "\n".join(parts)
 
 
@@ -75,6 +82,7 @@ def critique_draft(
     *,
     model: str,
     draft: Draft,
+    context: ContextBrief | None = None,
     budget: AgentBudget | None = None,
 ) -> list[Critique]:
     """Review `draft` for unsupported claims, hasty causality, and inflated confidence,
@@ -86,7 +94,8 @@ def critique_draft(
     from those numbers (causality, confidence, claim_type vs. what the deltas actually support),
     not the arithmetic itself, and never re-queries or re-derives a delta on its own.
 
-    No research tools: the Skeptic judges the draft against the data it cites, nothing else.
+    No research tools: the Skeptic judges the draft against the data it cites and, when given,
+    the Context agent's news briefing - nothing else.
     Critiques targeting a claim id that isn't in the draft are dropped and logged. Raises
     BudgetExceeded if `budget` runs out first.
     """
@@ -96,7 +105,7 @@ def critique_draft(
         client,
         model=model,
         system=SYSTEM_PROMPT,
-        user_message=build_user_message(draft),
+        user_message=build_user_message(draft, context),
         output_tool=_submit_critiques_tool(claim_ids),
         log=log,
         budget=budget,

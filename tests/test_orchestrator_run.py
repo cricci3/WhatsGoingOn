@@ -9,6 +9,8 @@ from whatsgoingon.config import _optional_number
 from whatsgoingon.logging_config import JsonFormatter, agent_logger
 from whatsgoingon.orchestrator.budget import BudgetExceeded
 from whatsgoingon.orchestrator.state import (
+    ContextBrief,
+    ContextEvent,
     Critique,
     DebateRound,
     DebateState,
@@ -59,6 +61,16 @@ def test_format_transcript_shows_fallbacks_and_spend() -> None:
     assert "## Fallbacks" in transcript
     assert "round 1, skeptic: out of tokens -> unreviewed" in transcript
     assert "- analyst: 1 calls, 1,100 tokens" in transcript
+
+
+def test_format_transcript_shows_the_context_brief_first() -> None:
+    state = DebateState(month="2026-08", deltas=[CPI_DELTA], max_rounds=3)
+    state.context = ContextBrief(events=[ContextEvent(summary="OPEC cut.", related_series=["cpi"])])
+    state.rounds.append(DebateRound(draft=Draft(narrative="the draft text", claims=[]), critiques=[]))
+
+    transcript = run_module.format_transcript(state)
+
+    assert transcript.index("[cpi] OPEC cut.") < transcript.index("the draft text")
 
 
 def test_transcript_of_a_clean_cycle_has_no_fallbacks_section() -> None:

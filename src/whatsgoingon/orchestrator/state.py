@@ -73,6 +73,25 @@ class EditorDecision:
 
 
 @dataclass(frozen=True)
+class ContextEvent:
+    """One real-world event the Context agent found, tied to the tracked series it may explain."""
+
+    summary: str
+    related_series: list[str]
+    source: str | None = None
+
+
+@dataclass(frozen=True)
+class ContextBrief:
+    """News context gathered by the Context agent in parallel with the Analyst's first draft.
+    Given to the Skeptic (to check causal claims against real events, not just co-movement)
+    and to the Analyst's revisions."""
+
+    events: list[ContextEvent]
+    notes: str | None = None
+
+
+@dataclass(frozen=True)
 class Fallback:
     """A degradation the orchestrator applied instead of failing: which agent couldn't do its
     part, in which round, why, and what happened instead. Kept on DebateState and shown in the
@@ -105,6 +124,7 @@ class DebateState:
     decision: EditorDecision | None = None
     budget: CycleBudget = field(default_factory=CycleBudget)
     fallbacks: list[Fallback] = field(default_factory=list)
+    context: ContextBrief | None = None  # None: not gathered (disabled, or the agent failed)
 
     @property
     def delta_summary(self) -> str:
@@ -158,3 +178,16 @@ def format_review(debate_round: DebateRound) -> str:
 
 def format_fallbacks(fallbacks: list[Fallback]) -> str:
     return "\n".join(f"- round {f.round}, {f.agent}: {f.reason} -> {f.action}" for f in fallbacks)
+
+
+def format_context(brief: ContextBrief) -> str:
+    lines = []
+    for event in brief.events:
+        related = ", ".join(event.related_series) or "no tracked series"
+        source = f" (source: {event.source})" if event.source else ""
+        lines.append(f"- [{related}] {event.summary}{source}")
+    if not lines:
+        lines.append("(no relevant news found)")
+    if brief.notes:
+        lines.append(f"Notes: {brief.notes}")
+    return "\n".join(lines)

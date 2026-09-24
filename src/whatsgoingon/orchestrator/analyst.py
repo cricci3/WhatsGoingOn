@@ -13,6 +13,7 @@ from whatsgoingon.orchestrator.state import (
     Claim,
     DebateState,
     Draft,
+    format_context,
     format_draft,
     format_review,
 )
@@ -90,6 +91,11 @@ def build_user_message(state: DebateState) -> str:
         ]
         if last.editor_decision is not None:
             parts += ["\nThe Editor sent it back for another round:", last.editor_decision.reason]
+        if state.context is not None:
+            parts += [
+                "\nNews context a separate researcher gathered while you wrote the first draft:",
+                format_context(state.context),
+            ]
         parts.append("\nRevise the draft to address these.")
     else:
         parts.append(f"\nWrite the first draft for {state.month}.")

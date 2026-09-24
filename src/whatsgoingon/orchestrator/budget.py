@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+import threading
 import time
 from dataclasses import dataclass, field
 from typing import Any
@@ -95,20 +96,26 @@ class CycleBudget:
     agent_timeout_s is a different kind of limit: wall-clock seconds per *invocation* (one
     agent's turn in one round), not cumulative over the cycle - it's what turns "the Skeptic
     isn't answering" into a fallback instead of a hung cycle. See AgentBudget.
+
+    Thread-safe: agents that run in parallel (Analyst and Context) check and record into the
+    same budget from different worker threads, so reads and writes of `spend` take a lock.
     """
 
     max_cost_usd: float | None = None
     agent_max_tokens: dict[str, int] = field(default_factory=dict)
     agent_timeout_s: dict[str, float] = field(default_factory=dict)
     spend: dict[str, AgentSpend] = field(default_factory=dict)
+    _lock: threading.RLock = field(default_factory=threading.RLock, init=False, repr=False, compare=False)
 
     @property
     def cost_usd(self) -> float:
-        return sum(s.cost_usd for s in self.spend.values())
+        with self._lock:
+            return sum(s.cost_usd for s in self.spend.values())
 
     @property
     def total_tokens(self) -> int:
-        return sum(s.total_tokens for s in self.spend.values())
+        with self._lock:
+            return sum(s.total_tokens for s in self.spend.values())
 
     def for_agent(self, agent: str) -> AgentBudget:
         """A view for one invocation of `agent`: its time limit starts counting now."""
@@ -118,29 +125,36 @@ class CycleBudget:
 
     def check(self, agent: str) -> None:
         """Raise BudgetExceeded if `agent` may not make another model call."""
-        spent = self.spend.get(agent, AgentSpend())
+        with self._lock:
+            agent_tokens = self.spend.get(agent, AgentSpend()).total_tokens
+            cycle_cost = self.cost_usd
         agent_limit = self.agent_max_tokens.get(agent)
-        if agent_limit is not None and spent.total_tokens >= agent_limit:
+        if agent_limit is not None and agent_tokens >= agent_limit:
             raise BudgetExceeded(
-                agent=agent, scope="agent", spent=spent.total_tokens, limit=agent_limit, unit="tokens"
+                agent=agent, scope="agent", spent=agent_tokens, limit=agent_limit, unit="tokens"
             )
-        if self.max_cost_usd is not None and self.cost_usd >= self.max_cost_usd:
+        if self.max_cost_usd is not None and cycle_cost >= self.max_cost_usd:
             raise BudgetExceeded(
-                agent=agent, scope="cycle", spent=self.cost_usd, limit=self.max_cost_usd, unit="usd"
+                agent=agent, scope="cycle", spent=cycle_cost, limit=self.max_cost_usd, unit="usd"
             )
 
     def record(self, agent: str, *, model: str, input_tokens: int, output_tokens: int) -> AgentSpend:
         if model not in PRICES_PER_MTOK:
             logger.warning("no price for model %s; costing it at the highest known rate", model)
-        spent = self.spend.setdefault(agent, AgentSpend())
-        spent.calls += 1
-        spent.input_tokens += input_tokens
-        spent.output_tokens += output_tokens
-        spent.cost_usd += estimate_cost_usd(model, input_tokens, output_tokens)
-        return spent
+        with self._lock:
+            spent = self.spend.setdefault(agent, AgentSpend())
+            spent.calls += 1
+            spent.input_tokens += input_tokens
+            spent.output_tokens += output_tokens
+            spent.cost_usd += estimate_cost_usd(model, input_tokens, output_tokens)
+            return spent
 
     def summary(self) -> dict[str, Any]:
         """JSON-friendly snapshot of limits and spend, for logs and the transcript."""
+        with self._lock:
+            return self._summary()
+
+    def _summary(self) -> dict[str, Any]:
         return {
             "cost_usd": round(self.cost_usd, 6),
             "max_cost_usd": self.max_cost_usd,

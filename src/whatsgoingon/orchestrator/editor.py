@@ -70,7 +70,9 @@ def build_user_message(state: DebateState, *, forced: bool) -> str:
         ]
     if forced:
         why = (
-            "the cycle ran degraded" if state.fallbacks else f"this was the last of {state.max_rounds} rounds"
+            f"this was the last of {state.max_rounds} rounds"
+            if len(state.rounds) >= state.max_rounds
+            else "the cycle ran degraded"
         )
         parts.append(
             f"\nNo more rounds ({why}): you must publish now. Call out any "

@@ -268,3 +268,22 @@ def test_tool_errors_still_propagate_from_the_worker_thread() -> None:
 
     with pytest.raises(ValueError, match="bad series"):
         structured_module._run_tool(boom, {}, timeout_s=5)
+
+
+def test_parallel_agents_can_record_into_the_same_budget() -> None:
+    budget = CycleBudget(max_cost_usd=100.0)
+
+    def spend(agent: str) -> None:
+        for _ in range(2000):
+            budget.record(agent, model="claude-haiku-4-5", input_tokens=1, output_tokens=1)
+            budget.check(agent)
+            budget.summary()
+
+    threads = [threading.Thread(target=spend, args=(agent,)) for agent in ("analyst", "context")]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join()
+
+    assert budget.total_tokens == 8000
+    assert {agent: s.calls for agent, s in budget.spend.items()} == {"analyst": 2000, "context": 2000}
