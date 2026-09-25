@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import logging
 import threading
+import time
 from collections.abc import Callable, Mapping, Sequence
 from typing import Any
 
@@ -150,8 +151,8 @@ def call_structured(
     - on the last iteration tool_choice names `output_tool` explicitly, so the loop can't
       run out of budget without an answer.
 
-    Every model call and tool call is logged through `log` with token counts, and a final
-    per-call total is logged when the agent submits.
+    Every model call and tool call is logged through `log` with token counts (and each model
+    call's latency), and a final per-call total is logged when the agent submits.
 
     With a `budget`, it's checked before every model call (raising BudgetExceeded or
     AgentTimeout once a limit is hit - the caller decides the fallback) and each call's usage
@@ -167,6 +168,7 @@ def call_structured(
     all_tools = [*tools, output_tool]
     messages: list[dict[str, Any]] = [{"role": "user", "content": user_message}]
     input_tokens = output_tokens = tool_calls = 0
+    started = time.monotonic()
 
     for iteration in range(1, max_iterations + 1):
         force_output = iteration == max_iterations or not tools
@@ -181,7 +183,9 @@ def call_structured(
             tool_choice=tool_choice,
             messages=messages,
         )
+        call_started = time.monotonic()
         response = _create_with_retries(client, request, budget=budget, log=log)
+        latency_s = time.monotonic() - call_started
         input_tokens += response.usage.input_tokens
         output_tokens += response.usage.output_tokens
         spent = None
@@ -190,6 +194,7 @@ def call_structured(
                 model=model,
                 input_tokens=response.usage.input_tokens,
                 output_tokens=response.usage.output_tokens,
+                latency_s=latency_s,
             )
         log.info(
             "agent model call",
@@ -199,6 +204,7 @@ def call_structured(
                 "stop_reason": response.stop_reason,
                 "input_tokens": response.usage.input_tokens,
                 "output_tokens": response.usage.output_tokens,
+                "latency_s": round(latency_s, 3),
                 **({"agent_cost_usd": round(spent.cost_usd, 6)} if spent is not None else {}),
             },
         )
@@ -214,6 +220,7 @@ def call_structured(
                         "tool_calls": tool_calls,
                         "total_input_tokens": input_tokens,
                         "total_output_tokens": output_tokens,
+                        "elapsed_s": round(time.monotonic() - started, 3),
                     },
                 )
                 return block.input

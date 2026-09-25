@@ -11,7 +11,7 @@ import anthropic
 from whatsgoingon.agent.state import SeriesDelta
 from whatsgoingon.logging_config import agent_logger
 from whatsgoingon.orchestrator.analyst import produce_draft
-from whatsgoingon.orchestrator.budget import AgentUnavailable, CycleBudget
+from whatsgoingon.orchestrator.budget import AgentBudget, AgentUnavailable, CycleBudget
 from whatsgoingon.orchestrator.context import gather_context
 from whatsgoingon.orchestrator.editor import decide
 from whatsgoingon.orchestrator.skeptic import critique_draft
@@ -77,6 +77,10 @@ async def run_debate_cycle(
     - Context: the debate carries on without news context (it's an aid, not a step).
     After an Analyst or Skeptic fallback no further rounds start: the next Editor pass must
     publish.
+
+    Each agent turn's wall-clock time is recorded into the budget next to its tokens and cost
+    (per-agent latency), and the cycle's own wall-clock time lands on state.elapsed_s - with
+    the parallel phase, that's less than the sum of the agents' latencies.
     """
     if max_rounds < 1:
         raise ValueError("max_rounds must be at least 1")
@@ -184,17 +188,28 @@ async def run_debate_cycle(
     raise AssertionError("unreachable: the last round always publishes")
 
 
-async def _attempt(agent_fn: Any, /, *args: Any, **kwargs: Any) -> tuple[Any, Exception | None, float]:
+async def _attempt(
+    agent_fn: Any, /, *args: Any, budget: AgentBudget, **kwargs: Any
+) -> tuple[Any, Exception | None, float]:
     """Run one (synchronous) agent call on a worker thread: (result, None, seconds) on
     success, (None, error, seconds) on an AGENT_FAILURES error. Returning the error instead of
     raising lets asyncio.gather() hand back both halves of the parallel phase even when one
-    fails, and leaves the fallback decision to the loop. Any other exception propagates."""
+    fails, and leaves the fallback decision to the loop. Any other exception propagates.
+
+    The turn's duration is recorded into `budget` either way - a turn that timed out cost
+    the cycle its full time limit, and that belongs in the agent's latency too."""
     started = time.monotonic()
     try:
-        result = await asyncio.to_thread(agent_fn, *args, **kwargs)
+        result = await asyncio.to_thread(agent_fn, *args, budget=budget, **kwargs)
     except AGENT_FAILURES as exc:
-        return None, exc, time.monotonic() - started
-    return result, None, time.monotonic() - started
+        return None, exc, _record_turn(budget, started)
+    return result, None, _record_turn(budget, started)
+
+
+def _record_turn(budget: AgentBudget, started: float) -> float:
+    elapsed = time.monotonic() - started
+    budget.record_invocation(latency_s=elapsed)
+    return elapsed
 
 
 def _take_context(state: DebateState, log: logging.LoggerAdapter, brief: Any, exc: Exception | None) -> None:
@@ -304,9 +319,11 @@ def _fall_back(
 
 def _finish(state: DebateState, log: logging.LoggerAdapter, decision: EditorDecision) -> DebateState:
     state.decision = decision
+    state.elapsed_s = time.monotonic() - state.started_monotonic
     log.info(
         "debate cycle finished",
         extra={
+            "elapsed_s": round(state.elapsed_s, 3),
             "rounds_used": len(state.rounds),
             "max_rounds": state.max_rounds,
             "degraded": bool(state.fallbacks),

@@ -113,6 +113,7 @@ uv run whatsgoingon-agent
 # Or serve it over HTTP -- http://localhost:8000/
 uv run whatsgoingon-api
 # then: GET /health, GET /state, POST /refresh?month=YYYY-MM
+# Phase 2 debate: POST /debate?month=YYYY-MM, GET /debate, GET /debate/YYYY-MM
 # interactive docs at http://127.0.0.1:8000/docs
 
 # Or run it in Docker

@@ -29,6 +29,7 @@ from whatsgoingon.orchestrator.state import (
     format_fallbacks,
     format_review,
 )
+from whatsgoingon.orchestrator.transcript import save_transcript, transcript_to_dict
 
 logger = logging.getLogger(__name__)
 
@@ -108,20 +109,25 @@ def format_transcript(state: DebateState) -> str:
         ]
     if state.fallbacks:
         parts += ["\n## Fallbacks (the cycle ran degraded)\n", format_fallbacks(state.fallbacks)]
-    parts += ["\n## Spend\n", format_spend(state.budget)]
+    parts += ["\n## Spend\n", format_spend(state.budget, elapsed_s=state.elapsed_s)]
     return "\n".join(parts)
 
 
-def format_spend(budget: CycleBudget) -> str:
+def format_spend(budget: CycleBudget, *, elapsed_s: float | None = None) -> str:
+    """Per-agent tokens, cost and latency (wall-clock of its turns, and how much of that was
+    spent waiting on the model), then the cycle's totals."""
     lines = []
     for agent, spent in budget.spend.items():
         limit = budget.agent_max_tokens.get(agent)
         cap = f" of {limit:,}" if limit is not None else ""
         lines.append(
-            f"- {agent}: {spent.calls} calls, {spent.total_tokens:,}{cap} tokens, ~${spent.cost_usd:.4f}"
+            f"- {agent}: {spent.calls} calls, {spent.total_tokens:,}{cap} tokens, ~${spent.cost_usd:.4f}, "
+            f"{spent.latency_s:.1f}s over {spent.invocations} turns "
+            f"({spent.model_latency_s:.1f}s in the model)"
         )
     cap = f" of ${budget.max_cost_usd:.2f}" if budget.max_cost_usd is not None else ""
-    lines.append(f"- cycle: {budget.total_tokens:,} tokens, ~${budget.cost_usd:.4f}{cap}")
+    wall = f", {elapsed_s:.1f}s wall-clock" if elapsed_s is not None else ""
+    lines.append(f"- cycle: {budget.total_tokens:,} tokens, ~${budget.cost_usd:.4f}{cap}{wall}")
     return "\n".join(lines)
 
 
@@ -167,7 +173,9 @@ def main(argv: list[str] | None = None) -> int:
         print(f"Debate aborted, nothing published: {exc}")
         print(format_spend(budget))
         return 1
+    path = save_transcript(transcript_to_dict(state))
     print(format_transcript(state))
+    print(f"\n(transcript saved to {path})")
     return 0
 
 

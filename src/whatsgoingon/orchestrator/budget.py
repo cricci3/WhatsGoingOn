@@ -6,31 +6,9 @@ import time
 from dataclasses import dataclass, field
 from typing import Any
 
+from whatsgoingon.pricing import PRICES_PER_MTOK, estimate_cost_usd
+
 logger = logging.getLogger(__name__)
-
-# USD per million tokens, (input, output) - Anthropic first-party API list prices. Prompt
-# caching isn't used anywhere in the orchestrator, so cache read/write rates aren't modelled.
-PRICES_PER_MTOK: dict[str, tuple[float, float]] = {
-    "claude-haiku-4-5": (1.00, 5.00),
-    "claude-sonnet-4-6": (3.00, 15.00),
-    "claude-sonnet-5": (2.00, 10.00),
-    "claude-opus-4-6": (5.00, 25.00),
-    "claude-opus-4-7": (5.00, 25.00),
-    "claude-opus-4-8": (5.00, 25.00),
-    "claude-opus-5": (5.00, 25.00),
-    "claude-opus-5-5": (4.00, 20.00),
-    "claude-fable-5": (10.00, 50.00),
-    "claude-fable-5-1": (10.00, 50.00),
-}
-# An unknown model is priced like the most expensive known one: overestimating the spend
-# trips the budget early, underestimating it would let a cycle overspend unnoticed.
-UNKNOWN_MODEL_PRICE = max(PRICES_PER_MTOK.values())
-
-
-def estimate_cost_usd(model: str, input_tokens: int, output_tokens: int) -> float:
-    price_in, price_out = PRICES_PER_MTOK.get(model, UNKNOWN_MODEL_PRICE)
-    return (input_tokens * price_in + output_tokens * price_out) / 1_000_000
-
 
 class AgentUnavailable(RuntimeError):
     """An agent can't produce its output because it hit one of its limits. The orchestrator
@@ -67,12 +45,19 @@ def _fmt(value: float, unit: str) -> str:
 
 @dataclass
 class AgentSpend:
-    """Running totals for one agent across every model call it made in the cycle."""
+    """Running totals for one agent across every model call it made in the cycle.
+
+    Two latencies, because they answer different questions: latency_s is the wall-clock time
+    of the agent's turns (invocations) - what the cycle actually waited on it, research tools
+    and retry backoff included; model_latency_s is the part of it spent waiting on the API."""
 
     calls: int = 0
     input_tokens: int = 0
     output_tokens: int = 0
     cost_usd: float = 0.0
+    invocations: int = 0
+    latency_s: float = 0.0
+    model_latency_s: float = 0.0
 
     @property
     def total_tokens(self) -> int:
@@ -138,7 +123,10 @@ class CycleBudget:
                 agent=agent, scope="cycle", spent=cycle_cost, limit=self.max_cost_usd, unit="usd"
             )
 
-    def record(self, agent: str, *, model: str, input_tokens: int, output_tokens: int) -> AgentSpend:
+    def record(
+        self, agent: str, *, model: str, input_tokens: int, output_tokens: int, latency_s: float = 0.0
+    ) -> AgentSpend:
+        """Account for one model call (latency_s: how long it took, retries included)."""
         if model not in PRICES_PER_MTOK:
             logger.warning("no price for model %s; costing it at the highest known rate", model)
         with self._lock:
@@ -147,6 +135,15 @@ class CycleBudget:
             spent.input_tokens += input_tokens
             spent.output_tokens += output_tokens
             spent.cost_usd += estimate_cost_usd(model, input_tokens, output_tokens)
+            spent.model_latency_s += latency_s
+            return spent
+
+    def record_invocation(self, agent: str, *, latency_s: float) -> AgentSpend:
+        """Account for one finished turn of `agent`, successful or not."""
+        with self._lock:
+            spent = self.spend.setdefault(agent, AgentSpend())
+            spent.invocations += 1
+            spent.latency_s += latency_s
             return spent
 
     def summary(self) -> dict[str, Any]:
@@ -166,6 +163,9 @@ class CycleBudget:
                     "output_tokens": s.output_tokens,
                     "cost_usd": round(s.cost_usd, 6),
                     "max_tokens": self.agent_max_tokens.get(agent),
+                    "invocations": s.invocations,
+                    "latency_s": round(s.latency_s, 3),
+                    "model_latency_s": round(s.model_latency_s, 3),
                 }
                 for agent, s in self.spend.items()
             },
@@ -197,7 +197,16 @@ class AgentBudget:
     def remaining_s(self) -> float | None:
         return None if self.deadline is None else max(self.deadline - time.monotonic(), 0.0)
 
-    def record(self, *, model: str, input_tokens: int, output_tokens: int) -> AgentSpend:
+    def record(
+        self, *, model: str, input_tokens: int, output_tokens: int, latency_s: float = 0.0
+    ) -> AgentSpend:
         return self.cycle.record(
-            self.agent, model=model, input_tokens=input_tokens, output_tokens=output_tokens
+            self.agent,
+            model=model,
+            input_tokens=input_tokens,
+            output_tokens=output_tokens,
+            latency_s=latency_s,
         )
+
+    def record_invocation(self, *, latency_s: float) -> AgentSpend:
+        return self.cycle.record_invocation(self.agent, latency_s=latency_s)

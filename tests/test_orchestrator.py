@@ -359,3 +359,22 @@ def test_bug_in_the_context_agent_is_not_swallowed(agents: dict[str, Mock]) -> N
 
     with pytest.raises(KeyError):
         _run(context_model="context-model")
+
+
+# --- latency ---
+
+
+def test_every_agent_turn_and_the_whole_cycle_are_timed(agents: dict[str, Mock]) -> None:
+    agents["critique_draft"].side_effect = [[HIGH], _out_of_budget("skeptic")]  # failed turns count too
+
+    state = _run(max_rounds=3, context_model="context-model")
+
+    spend = state.budget.spend
+    assert {agent: s.invocations for agent, s in spend.items()} == {
+        "analyst": 2,
+        "context": 1,
+        "skeptic": 2,
+        "editor": 1,
+    }
+    assert state.elapsed_s is not None
+    assert state.elapsed_s >= max(s.latency_s for s in spend.values())

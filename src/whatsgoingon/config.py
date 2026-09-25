@@ -73,6 +73,8 @@ AGENT_TIMEOUT_S: dict[str, float | None] = {
 NEWSAPI_KEY = os.getenv("NEWSAPI_KEY")
 
 CHROMA_PATH = Path(os.getenv("WGO_CHROMA_PATH", PROJECT_ROOT / "data" / "chroma"))
+# Phase 2 debate transcripts, one JSON file per month (served by the API's /debate endpoints).
+DEBATES_PATH = Path(os.getenv("WGO_DEBATES_PATH", PROJECT_ROOT / "data" / "debates"))
 
 # Optional: local Obsidian vault folder to export each narrative to as a Markdown note.
 # Export is a no-op when unset.

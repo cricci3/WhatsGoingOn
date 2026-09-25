@@ -77,12 +77,13 @@ changelog di cosa è cambiato e perché).
       solo l'output finale
 
 ### Settimana 3 — Produzione
-- [ ] Endpoint API che espone anche la trascrizione del dibattito (bozza, critiche,
-      finale, changelog), non solo il risultato finale
+- [x] Endpoint API che espone anche la trascrizione del dibattito (bozza, critiche,
+      finale, changelog), non solo il risultato finale — `POST /debate`, `GET /debate`,
+      `GET /debate/{month}`; trascrizioni salvate in `data/debates/<mese>.json`
 - [ ] Costo e latenza per-agente loggati e aggregati (numero concreto: costo di un
-      ciclo a 3 agenti vs 1 del mese scorso)
-- [ ] Deploy vero su Fly.io o Render (a differenza della Fase 1, rimasta locale per
-      scelta) + env var per i budget
+      ciclo a 3 agenti vs 1 del mese scorso) — strumentazione fatta (latenza per turno e
+      per chiamata al modello in `CycleBudget`, `elapsed_s` del ciclo, Fase 1 logga
+      token/costo/latenza con lo stesso listino `pricing.py`); manca il numero da run live
 
 ### Settimana 4 — Rifinitura e demo
 - [ ] CI estesa (riusa `.github/workflows/ci.yml` come base)
@@ -90,8 +91,6 @@ changelog di cosa è cambiato e perché).
       revisione → finale), non solo il testo finale
 - [ ] README/CLAUDE.md aggiornati: quando il pattern debate/critique ha davvero
       cambiato l'output (esempi concreti dai run) vs quando è stato solo overhead
-- [ ] Bonus se c'è tempo: agente "Contrarian" che argomenta la tesi opposta (debate a
-      2 vs critique a 1)
 
 ## Working conventions (promemoria)
 

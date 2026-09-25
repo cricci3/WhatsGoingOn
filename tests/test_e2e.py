@@ -83,7 +83,11 @@ def _fake_yahoo_fetch_series(ticker: str, name: str, *, period: str = "5y") -> l
 
 
 def _end_turn_response(text: str) -> SimpleNamespace:
-    return SimpleNamespace(stop_reason="end_turn", content=[SimpleNamespace(type="text", text=text)])
+    return SimpleNamespace(
+        stop_reason="end_turn",
+        content=[SimpleNamespace(type="text", text=text)],
+        usage=SimpleNamespace(input_tokens=100, output_tokens=50),
+    )
 
 
 def _wire_e2e_environment(monkeypatch, tmp_path: Path) -> SimpleNamespace:

@@ -1,6 +1,7 @@
 """Budget accounting (tokens, cost, time) on its own, and how call_structured() enforces it
 and retries transient API errors."""
 
+import logging
 import threading
 import time
 from unittest.mock import Mock
@@ -11,15 +12,9 @@ from orchestrator_fakes import api_error, client_with, response, tool_use
 
 import whatsgoingon.orchestrator.structured as structured_module
 from whatsgoingon.logging_config import agent_logger
-from whatsgoingon.orchestrator.budget import (
-    UNKNOWN_MODEL_PRICE,
-    AgentBudget,
-    AgentTimeout,
-    BudgetExceeded,
-    CycleBudget,
-    estimate_cost_usd,
-)
+from whatsgoingon.orchestrator.budget import AgentBudget, AgentTimeout, BudgetExceeded, CycleBudget
 from whatsgoingon.orchestrator.structured import MAX_ATTEMPTS, _retry_after_s, call_structured
+from whatsgoingon.pricing import UNKNOWN_MODEL_PRICE, estimate_cost_usd
 
 
 def test_cost_uses_the_models_input_and_output_prices() -> None:
@@ -287,3 +282,37 @@ def test_parallel_agents_can_record_into_the_same_budget() -> None:
 
     assert budget.total_tokens == 8000
     assert {agent: s.calls for agent, s in budget.spend.items()} == {"analyst": 2000, "context": 2000}
+
+
+def test_latency_is_accumulated_per_agent_and_in_the_summary() -> None:
+    budget = CycleBudget()
+    budget.record("analyst", model="claude-haiku-4-5", input_tokens=10, output_tokens=1, latency_s=1.5)
+    budget.record("analyst", model="claude-haiku-4-5", input_tokens=10, output_tokens=1, latency_s=2.0)
+    budget.record_invocation("analyst", latency_s=4.25)
+    budget.record_invocation("skeptic", latency_s=0.5)  # a turn that failed before any model call
+
+    analyst = budget.summary()["agents"]["analyst"]
+    assert (analyst["invocations"], analyst["latency_s"], analyst["model_latency_s"]) == (1, 4.25, 3.5)
+    skeptic = budget.spend["skeptic"]
+    assert (skeptic.calls, skeptic.invocations, skeptic.latency_s) == (0, 1, 0.5)
+
+
+def test_call_structured_records_each_model_calls_latency(caplog: pytest.LogCaptureFixture) -> None:
+    client = client_with(response(tool_use("submit", {})))
+    cycle = CycleBudget()
+
+    with caplog.at_level(logging.INFO):
+        call_structured(
+            client,
+            model="claude-haiku-4-5",
+            system="s",
+            user_message="u",
+            output_tool={"name": "submit", "input_schema": {"type": "object"}},
+            log=agent_logger(__name__, agent="tester"),
+            budget=cycle.for_agent("tester"),
+        )
+
+    assert cycle.spend["tester"].model_latency_s >= 0
+    model_call = next(r for r in caplog.records if r.getMessage() == "agent model call")
+    submitted = next(r for r in caplog.records if r.getMessage() == "agent submitted output")
+    assert model_call.latency_s >= 0 and submitted.elapsed_s >= model_call.latency_s

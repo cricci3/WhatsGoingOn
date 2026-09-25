@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import time
 from dataclasses import dataclass, field
 from typing import Literal
 
@@ -114,8 +115,9 @@ class DebateState:
     all reason about the exact same data snapshot for the whole cycle - no drift between an
     as_of used in round 1 and a slightly different one in round 2.
 
-    budget carries the cycle's spending limits and running spend; fallbacks records every
-    degradation applied when a limit was hit."""
+    budget carries the cycle's spending limits and running spend (tokens, cost, per-agent
+    latency); fallbacks records every degradation applied when a limit was hit. elapsed_s is
+    the whole cycle's wall-clock time, set once the Editor publishes."""
 
     month: str
     deltas: list[SeriesDelta]
@@ -125,6 +127,8 @@ class DebateState:
     budget: CycleBudget = field(default_factory=CycleBudget)
     fallbacks: list[Fallback] = field(default_factory=list)
     context: ContextBrief | None = None  # None: not gathered (disabled, or the agent failed)
+    elapsed_s: float | None = None
+    started_monotonic: float = field(default_factory=time.monotonic, repr=False, compare=False)
 
     @property
     def delta_summary(self) -> str:

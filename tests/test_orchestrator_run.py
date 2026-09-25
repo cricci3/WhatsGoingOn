@@ -5,6 +5,7 @@ import pytest
 from orchestrator_fakes import CPI_DELTA, api_error
 
 import whatsgoingon.orchestrator.run as run_module
+import whatsgoingon.orchestrator.transcript as transcript_module
 from whatsgoingon.config import _optional_number
 from whatsgoingon.logging_config import JsonFormatter, agent_logger
 from whatsgoingon.orchestrator.budget import BudgetExceeded
@@ -148,3 +149,33 @@ def test_agent_logger_stamps_context_and_keeps_per_call_extra(caplog: pytest.Log
     assert payload["agent"] == "skeptic"
     assert payload["round"] == 2
     assert payload["input_tokens"] == 5
+
+
+def test_spend_shows_latency_per_agent_and_the_cycles_wall_clock() -> None:
+    state = DebateState(month="2026-08", deltas=[CPI_DELTA], max_rounds=3)
+    state.budget.record(
+        "analyst", model="claude-haiku-4-5", input_tokens=1000, output_tokens=100, latency_s=2.0
+    )
+    state.budget.record_invocation("analyst", latency_s=3.5)
+
+    spend = run_module.format_spend(state.budget, elapsed_s=4.0)
+
+    assert "3.5s over 1 turns (2.0s in the model)" in spend
+    assert "4.0s wall-clock" in spend
+
+
+def test_main_prints_and_saves_the_transcript(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture, tmp_path
+) -> None:
+    state = DebateState(month="2026-08", deltas=[CPI_DELTA], max_rounds=3)
+    state.rounds.append(DebateRound(draft=Draft(narrative="the draft", claims=[]), critiques=[]))
+    state.decision = EditorDecision(action="publish", reason="ok", final_narrative="final", changelog="none")
+    monkeypatch.setattr(run_module, "run_debate", lambda **kwargs: state)
+    monkeypatch.setattr(run_module, "configure_logging", lambda: None)
+    monkeypatch.setattr(transcript_module, "DEBATES_PATH", tmp_path)
+
+    assert run_module.main(["--month", "2026-08"]) == 0
+
+    assert "the draft" in capsys.readouterr().out
+    saved = json.loads((tmp_path / "2026-08.json").read_text(encoding="utf-8"))
+    assert saved["final"]["narrative"] == "final"

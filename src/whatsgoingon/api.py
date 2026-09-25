@@ -4,16 +4,28 @@ import logging
 from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
 from datetime import date
+from typing import Annotated, Any
 
 import uvicorn
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Query
+from fastapi import Path as PathParam
 from fastapi.responses import HTMLResponse
 
 from whatsgoingon.agent.narrative_store import NarrativeStore
 from whatsgoingon.agent.run import run_cycle
 from whatsgoingon.logging_config import configure_logging
+from whatsgoingon.orchestrator.orchestrator import AGENT_FAILURES, DEFAULT_MAX_ROUNDS
+from whatsgoingon.orchestrator.run import run_debate
+from whatsgoingon.orchestrator.transcript import (
+    load_latest_transcript,
+    load_transcript,
+    save_transcript,
+    transcript_to_dict,
+)
 
 logger = logging.getLogger(__name__)
+
+MONTH_PATTERN = r"^\d{4}-\d{2}$"
 
 _INDEX_HTML = """\
 <!doctype html>
@@ -497,6 +509,49 @@ def refresh(month: str | None = None) -> dict[str, str | None]:
     except RuntimeError as exc:
         logger.warning("refresh failed", extra={"month": month, "error": str(exc)})
         raise HTTPException(status_code=503, detail=str(exc)) from exc
+
+
+@app.post("/debate")
+def debate(
+    month: Annotated[str | None, Query(pattern=MONTH_PATTERN)] = None,
+    max_rounds: Annotated[int, Query(ge=1, le=5)] = DEFAULT_MAX_ROUNDS,
+    context: bool = True,
+) -> dict[str, Any]:
+    """Run one Phase 2 debate cycle (Analyst -> Skeptic -> Editor, Context in parallel with
+    the first draft) and return its full transcript: every draft, critique and editor note,
+    the published narrative + changelog, fallbacks, and per-agent tokens/cost/latency. The
+    transcript is also saved, so GET /debate/{month} can serve it later. Synchronous, like
+    /refresh - a cycle takes tens of seconds to a few minutes. Doesn't touch the Phase 1
+    narrative that /state serves."""
+    month = month or date.today().strftime("%Y-%m")
+    try:
+        state = run_debate(month=month, max_rounds=max_rounds, with_context=context)
+    except (RuntimeError, *AGENT_FAILURES) as exc:
+        # Setup problems (no API key, no data) or the Analyst failing before a first draft -
+        # every later failure degrades inside the cycle instead of reaching here.
+        logger.warning("debate failed", extra={"month": month, "error": str(exc)})
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+    transcript = transcript_to_dict(state)
+    save_transcript(transcript)
+    return transcript
+
+
+@app.get("/debate")
+def latest_debate() -> dict[str, Any]:
+    """Transcript of the most recent month's debate."""
+    transcript = load_latest_transcript()
+    if transcript is None:
+        raise HTTPException(status_code=404, detail="No debate has been run yet")
+    return transcript
+
+
+@app.get("/debate/{month}")
+def debate_for_month(month: Annotated[str, PathParam(pattern=MONTH_PATTERN)]) -> dict[str, Any]:
+    """Transcript of the last debate run for `month` (YYYY-MM)."""
+    transcript = load_transcript(month)
+    if transcript is None:
+        raise HTTPException(status_code=404, detail=f"No debate has been run for {month}")
+    return transcript
 
 
 def main() -> int:
