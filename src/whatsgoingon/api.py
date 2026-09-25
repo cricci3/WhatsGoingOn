@@ -236,6 +236,62 @@ _INDEX_HTML = """\
     from { opacity: 0; transform: translateY(4px); }
     to { opacity: 1; transform: translateY(0); }
   }
+  .mode-switch {
+    display: flex;
+    margin: 0 auto 1.25rem;
+    width: fit-content;
+    background: var(--accent-soft);
+    border: 1px solid var(--border);
+    border-radius: 999px;
+    padding: 0.25rem;
+    gap: 0.2rem;
+  }
+  .mode-switch button {
+    background: transparent;
+    color: var(--text-muted);
+    font-size: 0.85rem;
+    padding: 0.45rem 1rem;
+    border-radius: 999px;
+  }
+  .mode-switch button:hover:not(:disabled) { background: transparent; color: var(--text); }
+  .mode-switch button[aria-pressed="true"],
+  .mode-switch button[aria-pressed="true"]:hover:not(:disabled) {
+    background: var(--card-bg);
+    color: var(--accent);
+    box-shadow: 0 1px 3px rgba(0,0,0,0.12);
+  }
+  .mode-hint { text-align: center; color: var(--text-muted); font-size: 0.8rem; margin: -0.6rem 0 1.25rem; }
+  .debate-meta {
+    margin-top: 1.25rem;
+    padding-top: 1rem;
+    border-top: 1px solid var(--border);
+    font-size: 0.85rem;
+    color: var(--text-muted);
+  }
+  .debate-meta[hidden] { display: none; }
+  .debate-stats { display: flex; flex-wrap: wrap; gap: 0.4rem 1rem; }
+  .debate-meta details { margin-top: 0.75rem; }
+  .debate-meta summary { cursor: pointer; color: var(--accent); font-weight: 600; }
+  .debate-meta .changelog { margin-top: 0.5rem; color: var(--text); line-height: 1.55; }
+  .progress { margin-top: 1.25rem; }
+  .progress[hidden] { display: none; }
+  .progress-track {
+    height: 0.5rem;
+    background: var(--accent-soft);
+    border-radius: 999px;
+    overflow: hidden;
+  }
+  .progress-fill {
+    height: 100%;
+    width: 0;
+    background: linear-gradient(90deg, var(--accent), var(--accent-hover));
+    border-radius: 999px;
+    transition: width 0.3s ease;
+  }
+  .progress-label { margin-top: 0.5rem; text-align: center; font-size: 0.82rem; color: var(--text-muted); }
+  @media (prefers-reduced-motion: reduce) {
+    .progress-fill, .fade-in, button { transition: none; animation: none; }
+  }
 </style>
 </head>
 <body>
@@ -248,12 +304,18 @@ _INDEX_HTML = """\
     <h1>WhatsGoingOn</h1>
     <p>An agent's monthly read on macro data and markets</p>
   </header>
+  <div class="mode-switch" role="group" aria-label="Narrative version">
+    <button type="button" id="modeSingle" data-mode="single" aria-pressed="true">Single agent</button>
+    <button type="button" id="modeDebate" data-mode="debate" aria-pressed="false">Multi-agent debate</button>
+  </div>
+  <p class="mode-hint" id="modeHint"></p>
   <div class="card" id="card">
     <div class="card-header">
       <span class="month-badge" id="monthBadge"></span>
       <span class="timestamp" id="timestamp"></span>
     </div>
     <div class="narrative" id="narrative">Loading…</div>
+    <div class="debate-meta" id="debateMeta" hidden></div>
   </div>
   <div class="controls">
     <input type="month" id="month" aria-label="Month to generate">
@@ -261,6 +323,13 @@ _INDEX_HTML = """\
       <span class="spinner"></span>
       <span id="refreshLabel">Generate new narrative</span>
     </button>
+  </div>
+  <div class="progress" id="progress" hidden>
+    <div class="progress-track" role="progressbar" aria-label="Agents at work"
+         aria-valuemin="0" aria-valuemax="100" id="progressTrack">
+      <div class="progress-fill" id="progressFill"></div>
+    </div>
+    <div class="progress-label" id="progressLabel" aria-live="polite"></div>
   </div>
   <div class="message" id="message"></div>
 </div>
@@ -275,6 +344,43 @@ _INDEX_HTML = """\
   const cardEl = document.getElementById("card");
   const themeToggle = document.getElementById("themeToggle");
   const themeIcon = document.getElementById("themeIcon");
+  const modeButtons = document.querySelectorAll(".mode-switch button");
+  const modeHint = document.getElementById("modeHint");
+  const debateMetaEl = document.getElementById("debateMeta");
+  const progressEl = document.getElementById("progress");
+  const progressTrack = document.getElementById("progressTrack");
+  const progressFill = document.getElementById("progressFill");
+  const progressLabel = document.getElementById("progressLabel");
+
+  // The two versions of the pipeline: Phase 1's single agent and Phase 2's debate
+  // (Analyst + Context in parallel, then Skeptic and Editor, up to 3 rounds).
+  // expectedS is a typical run's duration from live runs; it only drives the progress
+  // bar, since the endpoints don't report progress while they work.
+  const MODES = {
+    single: {
+      stateUrl: "/state",
+      runUrl: "/refresh",
+      buttonLabel: "Generate new narrative",
+      busyLabel: "Generating…",
+      working: "The agent is reading the data and writing",
+      hint: "One agent researches and writes the narrative (~20s).",
+      empty: "No narrative yet — generate the first one below.",
+      expectedS: 25,
+    },
+    debate: {
+      stateUrl: "/debate",
+      runUrl: "/debate",
+      buttonLabel: "Run the agent debate",
+      busyLabel: "Debating…",
+      working: "Analyst, Context, Skeptic and Editor are debating",
+      hint: "Analyst drafts, Skeptic critiques, Editor publishes or sends it back (~2 min, ~12x the cost).",
+      empty: "No debate yet — run the first one below.",
+      expectedS: 120,
+    },
+  };
+  let mode = "single";
+  let busy = false;
+  let progressTimer = null;
 
   function currentTheme() {
     const explicit = document.documentElement.getAttribute("data-theme");
@@ -391,6 +497,7 @@ _INDEX_HTML = """\
   }
 
   function showNarrative(data) {
+    debateMetaEl.hidden = true;
     monthBadge.textContent = data.month;
     timestampEl.textContent = formatTimestamp(data.generated_at);
     narrativeEl.innerHTML = markdownToHtml(data.narrative);
@@ -402,12 +509,102 @@ _INDEX_HTML = """\
     }
   }
 
+  function showDebate(data) {
+    monthBadge.textContent = data.month;
+    timestampEl.textContent = formatTimestamp(data.generated_at);
+    narrativeEl.innerHTML = markdownToHtml((data.final && data.final.narrative) || "");
+    const critiques = data.rounds.reduce((n, r) => n + r.critiques.length, 0);
+    const spend = data.spend || {};
+    const stats = [
+      data.rounds_used + (data.rounds_used === 1 ? " round" : " rounds"),
+      critiques + (critiques === 1 ? " critique" : " critiques"),
+    ];
+    if (typeof spend.cost_usd === "number") stats.push("~$" + spend.cost_usd.toFixed(3));
+    if (typeof spend.elapsed_s === "number") stats.push(Math.round(spend.elapsed_s) + "s");
+    let html = '<div class="debate-stats">' +
+      stats.map((s) => "<span>" + escapeHtml(s) + "</span>").join("") + "</div>";
+    if (data.final && data.final.changelog) {
+      html += "<details><summary>What the debate changed</summary>" +
+        '<div class="changelog">' + markdownToHtml(data.final.changelog) + "</div></details>";
+    }
+    debateMetaEl.innerHTML = html;
+    debateMetaEl.hidden = false;
+    playFadeIn();
+    if (data.degraded) {
+      const agents = data.fallbacks.map((f) => f.agent).join(", ");
+      showMessage("This cycle ran degraded (" + agents + " didn't finish) — see the changelog.",
+        { warning: true });
+    } else {
+      clearMessage();
+    }
+  }
+
+  function showResult(data) {
+    if (mode === "debate") showDebate(data);
+    else showNarrative(data);
+  }
+
   function showEmptyState() {
     monthBadge.textContent = "";
     timestampEl.textContent = "";
-    narrativeEl.innerHTML = '<div class="empty-state">No narrative yet — generate the first one below.</div>';
+    debateMetaEl.hidden = true;
+    narrativeEl.innerHTML = '<div class="empty-state">' + MODES[mode].empty + "</div>";
     playFadeIn();
   }
+
+  function setProgress(pct) {
+    progressFill.style.width = pct + "%";
+    progressTrack.setAttribute("aria-valuenow", String(Math.round(pct)));
+  }
+
+  // There are no real progress events, so the bar is time-based: it eases towards 95%
+  // around the mode's typical duration and only reaches 100% when the answer arrives.
+  function startProgress() {
+    const config = MODES[mode];
+    const started = Date.now();
+    progressEl.hidden = false;
+    const tick = () => {
+      const elapsed = (Date.now() - started) / 1000;
+      setProgress(Math.max(2, 95 * (1 - Math.exp(-2 * elapsed / config.expectedS))));
+      const overtime = elapsed > config.expectedS ? " — taking longer than usual" : "";
+      progressLabel.textContent = config.working + "… " + Math.round(elapsed) + "s (usually ~" +
+        config.expectedS + "s)" + overtime;
+    };
+    tick();
+    progressTimer = setInterval(tick, 500);
+  }
+
+  function stopProgress(succeeded) {
+    clearInterval(progressTimer);
+    progressTimer = null;
+    if (!succeeded) {
+      progressEl.hidden = true;
+      return;
+    }
+    setProgress(100);
+    progressLabel.textContent = "Done";
+    setTimeout(() => {
+      if (!busy) progressEl.hidden = true;
+    }, 600);
+  }
+
+  function setMode(next) {
+    mode = next;
+    modeButtons.forEach((b) => b.setAttribute("aria-pressed", String(b.dataset.mode === mode)));
+    modeHint.textContent = MODES[mode].hint;
+    refreshLabel.textContent = MODES[mode].buttonLabel;
+    try {
+      localStorage.setItem("wgo-mode", mode);
+    } catch {}
+    clearMessage();
+    debateMetaEl.hidden = true;
+    narrativeEl.textContent = "Loading…";
+    loadState();
+  }
+
+  modeButtons.forEach((b) => b.addEventListener("click", () => {
+    if (!busy && b.dataset.mode !== mode) setMode(b.dataset.mode);
+  }));
 
   function showMessage(text, options) {
     options = options || {};
@@ -422,46 +619,66 @@ _INDEX_HTML = """\
   }
 
   async function loadState() {
+    const requested = mode;
     try {
-      const res = await fetch("/state");
-      if (res.status === 404) {
+      const res = await fetch(MODES[requested].stateUrl);
+      const data = res.status === 404 ? null : await res.json();
+      if (requested !== mode) return;  // switched mode while this was loading
+      if (data === null) {
         showEmptyState();
         return;
       }
       if (!res.ok) throw new Error("failed to load state");
-      showNarrative(await res.json());
+      showResult(data);
     } catch (err) {
+      if (requested !== mode) return;
       showEmptyState();
       showMessage("Couldn't load the latest narrative: " + err);
     }
   }
 
+  function setBusy(value) {
+    busy = value;
+    refreshBtn.disabled = value;
+    refreshBtn.classList.toggle("loading", value);
+    modeButtons.forEach((b) => { b.disabled = value; });
+    monthInput.disabled = value;
+    refreshLabel.textContent = value ? MODES[mode].busyLabel : MODES[mode].buttonLabel;
+  }
+
   refreshBtn.addEventListener("click", async () => {
-    refreshBtn.disabled = true;
-    refreshBtn.classList.add("loading");
-    refreshLabel.textContent = "Generating…";
+    setBusy(true);
     clearMessage();
+    startProgress();
+    let succeeded = false;
     try {
-      const res = await fetch("/refresh?month=" + encodeURIComponent(monthInput.value), { method: "POST" });
+      const url = MODES[mode].runUrl + "?month=" + encodeURIComponent(monthInput.value);
+      const res = await fetch(url, { method: "POST" });
       const data = await res.json();
       if (!res.ok) {
-        showMessage(data.detail || "Refresh failed.");
+        // 422s carry a list of validation errors, not a sentence.
+        const detail = typeof data.detail === "string" ? data.detail : "check the month (YYYY-MM)";
+        showMessage("Run failed: " + detail);
       } else {
-        showNarrative(data);
+        succeeded = true;
+        showResult(data);
         if (data.warning) {
           window.alert(data.warning);
         }
       }
     } catch (err) {
-      showMessage("Refresh failed: " + err);
+      showMessage("Run failed: " + err);
     } finally {
-      refreshBtn.disabled = false;
-      refreshBtn.classList.remove("loading");
-      refreshLabel.textContent = "Generate new narrative";
+      setBusy(false);
+      stopProgress(succeeded);
     }
   });
 
-  loadState();
+  let savedMode = "single";
+  try {
+    if (localStorage.getItem("wgo-mode") === "debate") savedMode = "debate";
+  } catch {}
+  setMode(savedMode);
 </script>
 </body>
 </html>

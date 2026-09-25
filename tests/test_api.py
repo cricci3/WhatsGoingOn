@@ -21,6 +21,14 @@ def test_index_serves_demo_page() -> None:
     assert 'id="month"' in response.text
 
 
+def test_index_can_switch_between_single_agent_and_debate() -> None:
+    page = client.get("/").text
+
+    assert 'data-mode="single"' in page and 'data-mode="debate"' in page
+    assert 'stateUrl: "/debate"' in page and 'runUrl: "/refresh"' in page
+    assert 'role="progressbar"' in page
+
+
 def test_health() -> None:
     response = client.get("/health")
 

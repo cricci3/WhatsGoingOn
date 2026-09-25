@@ -90,6 +90,9 @@ changelog di cosa è cambiato e perché).
 - [ ] CI estesa (riusa `.github/workflows/ci.yml` come base)
 - [ ] UI minimale che mostra il dibattito come conversazione (bozza → critica →
       revisione → finale), non solo il testo finale
+      — parziale: la pagina demo ha lo switch singolo agente / dibattito e una barra di
+      avanzamento; in modalità dibattito mostra finale, giri/critiche/costo/tempo e il
+      changelog, ma non ancora le bozze e le critiche giro per giro
 - [ ] README/CLAUDE.md aggiornati: quando il pattern debate/critique ha davvero
       cambiato l'output (esempi concreti dai run) vs quando è stato solo overhead
 - [ ] Publish on GitHub pages
