@@ -77,6 +77,36 @@ Driven by my endless curiosity to understand *WhatsGoingOn* in the world, this p
 - **API layer** (`whatsgoingon/api.py`) — FastAPI app exposing the agent over HTTP, plus
   `logging_config.py` for structured (JSON) logs of the agent's tool-calling decisions.
 
+## Cost: one agent vs. a three-agent debate
+
+Phase 2 swaps the single agent for a debate (Analyst drafts, Skeptic critiques, Editor
+publishes or sends it back, with a Context agent researching news alongside the first
+draft). The same month (September 2026) and the same data snapshot were run twice with each
+setup, every role on Claude Haiku 4.5. Costs are estimated from token counts at list prices
+(`whatsgoingon/pricing.py`):
+
+| | Model calls | Tokens | Cost | Wall-clock |
+|---|---:|---:|---:|---:|
+| Phase 1 — single agent (run 1 / run 2) | 2 / 2 | 10.4k / 10.5k | $0.016 / $0.016 | 22s / 19s |
+| Phase 2 — debate, 3 rounds (run 1 / run 2) | 23 / 29 | 145k / 201k | $0.19 / $0.25 | 97s / 131s |
+
+So a debate cycle costs **~12–16x** a single-agent one and takes **~5–6x** as long. Where the
+money goes, per debate run:
+
+- **Analyst: 56–61%.** It goes back to its research tools on every revision (11–12 tool
+  calls in round 1, then 2–7 more per revision) instead of only rewriting, and in both runs it
+  used up all 6 of its round-1 iterations and had to be forced to submit.
+- **Context agent: 23–25%.** Five or six news/history lookups ahead of the first draft.
+- **Skeptic + Editor: 15–19% together.** They call no tools, so each turn is a single
+  model call of about 3–7k input tokens.
+
+Both debates used all 3 rounds: the Skeptic always found something at medium or high
+severity. Running Context alongside the first draft saved ~24s per cycle (a ~30s wall-clock
+phase instead of ~54s run back to back). Every debate saves its per-agent tokens, cost and
+latency with its transcript (`data/debates/<month>.json`, `GET /debate/{month}`). Whether
+the extra spend buys a better narrative is a separate question. That write-up is still to
+come.
+
 ## Status
 
 Data ingestion, the agent loop, the FastAPI wrapper + Dockerfile, and a minimal demo

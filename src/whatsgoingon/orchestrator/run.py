@@ -19,6 +19,7 @@ from whatsgoingon.config import (
     EDITOR_MODEL,
     SKEPTIC_MODEL,
 )
+from whatsgoingon.console import use_utf8_output
 from whatsgoingon.logging_config import configure_logging
 from whatsgoingon.orchestrator.budget import CycleBudget
 from whatsgoingon.orchestrator.orchestrator import AGENT_FAILURES, DEFAULT_MAX_ROUNDS, run_debate_cycle
@@ -158,6 +159,7 @@ def main(argv: list[str] | None = None) -> int:
         help="Skip the Context agent (news research run in parallel with the first draft)",
     )
     args = parser.parse_args(argv)
+    use_utf8_output()
 
     # JSON logs on stderr (per-agent model calls, tool calls, tokens, decisions); the
     # readable transcript on stdout, so the two can be redirected separately.

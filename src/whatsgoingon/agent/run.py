@@ -18,6 +18,7 @@ from whatsgoingon.config import (
     ANTHROPIC_WORKSPACE_ID,
     OBSIDIAN_VAULT_PATH,
 )
+from whatsgoingon.console import use_utf8_output
 
 logger = logging.getLogger(__name__)
 
@@ -141,6 +142,7 @@ def main(argv: list[str] | None = None) -> int:
         "(saves tokens while developing/testing)",
     )
     args = parser.parse_args(argv)
+    use_utf8_output()
 
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 
