@@ -4,8 +4,8 @@ Driven by my endless curiosity to understand *WhatsGoingOn* in the world, this p
 tracks a handful of US macro and market indicators, works out what changed over the last
 30 days, and asks Claude to write a narrative explaining what's going on.
 
-The narrative can be written in two ways: by a **single agent** (Phase 1) or by a
-**debate between several agents** that draft, critique and edit it (Phase 2). Both are
+The narrative can be written in two ways: by a **single agent** or by a
+**debate between several agents** that draft, critique and edit it. Both are
 hand-rolled on the Anthropic SDK, with no agent framework, so the mechanics of tool
 calling and coordination stay visible. Both read the same data and can run side by side.
 
@@ -25,7 +25,7 @@ calling and coordination stay visible. Both read the same data and can run side 
 
 ## Single agent vs. multi-agent debate
 
-| | Single agent (Phase 1) | Multi-agent debate (Phase 2) |
+| | Single agent | Multi-agent debate |
 |---|---|---|
 | Who writes | One agent does research and writing | Analyst drafts, Skeptic critiques, Editor publishes or sends it back; an optional Context agent researches news |
 | Output | Free-text narrative | Narrative split into tagged claims (factual / causal / correlation), each linked to the series it cites |
@@ -88,31 +88,6 @@ severity. Running Context alongside the first draft saved ~24s per cycle (a ~30s
 instead of ~54s back to back). Every transcript records per-agent tokens, cost and latency.
 Whether the extra spend buys a better narrative is a separate question, and that write-up
 is still to come.
-
-## Code layout
-
-- **Data** (`config.py`, `db.py`, `sources/`, `ingest.py`). One `fetch_series()` per
-  source, a shared `Observation` row shape, and an idempotent upsert into a single SQLite
-  table.
-- **Single agent** (`agent/`). `state.py` computes the deltas (shared with the debate),
-  `tools.py` holds the research tools, `loop.py` the tool-calling loop,
-  `narrative_store.py` the Chroma store, and `run.py` the CLI.
-- **Debate** (`orchestrator/`). `state.py` is the message-passing contract, `structured.py`
-  the tool loop for structured answers (with retries and timeouts), and there is one module
-  per agent (`analyst.py`, `skeptic.py`, `editor.py`, `context.py`). `budget.py` holds the
-  limits, `orchestrator.py` the cycle, `transcript.py` the JSON transcripts, and `run.py`
-  the CLI.
-- **API** (`api.py`). The FastAPI app and the demo page. `logging_config.py` produces
-  JSON logs tagged by agent, month and round.
-
-## Status
-
-- **Phase 1 (single agent):** done. Ingestion, agent, API, Docker, demo page and CI are
-  built and tested. It runs locally only.
-- **Phase 2 (debate):** orchestrator, budgets, timeouts/fallbacks, parallel Context agent,
-  transcript API and cost tracking are done.
-- **Still open:** a round-by-round debate view in the UI, a hosted deploy, and an honest
-  write-up of when the debate actually improved the output.
 
 ## Getting started
 
