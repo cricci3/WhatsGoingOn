@@ -219,6 +219,6 @@ __marimo__/
 
 # Streamlit
 .streamlit/secrets.toml
-CLAUDE.md
 .claude/skills/grill-me
 ObsidianWGO/*
+past_conversations/*

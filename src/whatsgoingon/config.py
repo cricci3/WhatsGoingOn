@@ -36,11 +36,45 @@ ANTHROPIC_API_KEY = os.getenv("ANTHROPIC_API_KEY")
 # the API then requires this header (Anthropic console -> Settings -> Workspaces).
 ANTHROPIC_WORKSPACE_ID = os.getenv("ANTHROPIC_WORKSPACE_ID")
 AGENT_MODEL = os.getenv("WGO_AGENT_MODEL", "claude-haiku-4-5")
+# Phase 2 orchestrator: one model per role, each defaulting to the Phase 1 agent's model.
+ANALYST_MODEL = os.getenv("WGO_ANALYST_MODEL", AGENT_MODEL)
+SKEPTIC_MODEL = os.getenv("WGO_SKEPTIC_MODEL", AGENT_MODEL)
+EDITOR_MODEL = os.getenv("WGO_EDITOR_MODEL", AGENT_MODEL)
+CONTEXT_MODEL = os.getenv("WGO_CONTEXT_MODEL", AGENT_MODEL)
+
+
+def _optional_number[T: (int, float)](name: str, default: T, cast: type[T]) -> T | None:
+    """Env var as a number; unset means `default`, set-but-empty means no limit."""
+    raw = os.getenv(name)
+    if raw is None:
+        return default
+    return cast(raw) if raw.strip() else None
+
+
+# Phase 2 budgets: generous guards against runaway loops, not yet calibrated on real runs
+# (that's week 3's cost logging). An empty value disables a limit.
+CYCLE_BUDGET_USD = _optional_number("WGO_CYCLE_BUDGET_USD", 1.00, float)
+AGENT_BUDGET_TOKENS: dict[str, int | None] = {
+    "analyst": _optional_number("WGO_ANALYST_BUDGET_TOKENS", 200_000, int),
+    "skeptic": _optional_number("WGO_SKEPTIC_BUDGET_TOKENS", 50_000, int),
+    "editor": _optional_number("WGO_EDITOR_BUDGET_TOKENS", 100_000, int),
+    "context": _optional_number("WGO_CONTEXT_BUDGET_TOKENS", 100_000, int),
+}
+# Wall-clock seconds per agent turn (one role, one round), including retries. The Analyst gets
+# the most because it may run several research-tool iterations.
+AGENT_TIMEOUT_S: dict[str, float | None] = {
+    "analyst": _optional_number("WGO_ANALYST_TIMEOUT_S", 180.0, float),
+    "skeptic": _optional_number("WGO_SKEPTIC_TIMEOUT_S", 60.0, float),
+    "editor": _optional_number("WGO_EDITOR_TIMEOUT_S", 90.0, float),
+    "context": _optional_number("WGO_CONTEXT_TIMEOUT_S", 120.0, float),
+}
 
 # Optional: enables the search_news tool when set.
 NEWSAPI_KEY = os.getenv("NEWSAPI_KEY")
 
 CHROMA_PATH = Path(os.getenv("WGO_CHROMA_PATH", PROJECT_ROOT / "data" / "chroma"))
+# Phase 2 debate transcripts, one JSON file per month (served by the API's /debate endpoints).
+DEBATES_PATH = Path(os.getenv("WGO_DEBATES_PATH", PROJECT_ROOT / "data" / "debates"))
 
 # Optional: local Obsidian vault folder to export each narrative to as a Markdown note.
 # Export is a no-op when unset.

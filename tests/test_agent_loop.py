@@ -1,5 +1,8 @@
+import logging
 from types import SimpleNamespace
 from unittest.mock import Mock
+
+import pytest
 
 from whatsgoingon.agent.loop import run_agent
 
@@ -13,7 +16,8 @@ def _tool_use_block(name: str, tool_input: dict, tool_id: str = "tool_1") -> Sim
 
 
 def _response(stop_reason: str, content: list) -> SimpleNamespace:
-    return SimpleNamespace(stop_reason=stop_reason, content=content)
+    usage = SimpleNamespace(input_tokens=100, output_tokens=50)
+    return SimpleNamespace(stop_reason=stop_reason, content=content, usage=usage)
 
 
 def _client_with_responses(*responses) -> Mock:
@@ -129,3 +133,25 @@ def test_gives_up_after_max_iterations() -> None:
 
     assert "did not reach a final narrative" in result
     assert client.messages.create.call_count == 3
+
+
+def test_logs_tokens_cost_and_latency_when_done(caplog) -> None:
+    client = _client_with_responses(
+        _response("tool_use", [_tool_use_block("lookup", {})]),
+        _response("end_turn", [_text_block("done")]),
+    )
+
+    with caplog.at_level(logging.INFO):
+        run_agent(
+            client,
+            model="claude-haiku-4-5",
+            system="s",
+            initial_message="m",
+            tools=[],
+            tool_impls={"lookup": lambda: {}},
+        )
+
+    finished = next(r for r in caplog.records if r.getMessage().startswith("agent finished"))
+    assert (finished.calls, finished.input_tokens, finished.output_tokens) == (2, 200, 100)
+    assert finished.cost_usd == pytest.approx((200 * 1 + 100 * 5) / 1_000_000)
+    assert finished.elapsed_s >= finished.model_latency_s >= 0

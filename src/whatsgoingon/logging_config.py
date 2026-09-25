@@ -30,3 +30,10 @@ def configure_logging(level: int = logging.INFO) -> None:
     handler = logging.StreamHandler()
     handler.setFormatter(JsonFormatter())
     logging.basicConfig(level=level, handlers=[handler], force=True)
+
+
+def agent_logger(name: str, **context: object) -> logging.LoggerAdapter:
+    """Logger that stamps `context` (e.g. agent="skeptic", month=..., round=...) onto every
+    record it emits, merged with any per-call `extra=`, so the orchestrator's logs can be
+    filtered by who said what without every call site repeating the same fields."""
+    return logging.LoggerAdapter(logging.getLogger(name), context, merge_extra=True)
