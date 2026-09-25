@@ -44,47 +44,6 @@ A single tool-calling loop (`agent/loop.py`). Claude gets the deltas and the mos
 past narratives. It decides whether a move is worth digging into, calling tools to query
 stored history, fetch another FRED series or search news. Then it writes the narrative.
 
-<details>
-<summary>Example single-agent output — September 2026</summary>
-
-> ## September 2026: Inflation Concerns Resurface as Energy Surges
->
-> The market's mood shifted noticeably this month as the confluence of rising energy
-> costs, higher bond yields, and a weakening dollar rattled investor confidence. The
-> headline numbers tell a defensive story: equities fell 1.5%, volatility ticked up,
-> and safe-haven gold rose, while the dollar index retreated 1%.
->
-> The standout mover is oil. WTI crude surged 6.2% month-over-month in the spot
-> price, but futures were far more dramatic—up 17.3% from mid-August to early
-> September. This sharp move suggests geopolitical tension or supply disruption
-> hitting markets hard. The crude price spike is the likely driver behind the
-> 15-basis-point rise in the 10-year Treasury yield to 4.80%, as investors price in
-> renewed inflation expectations. June-to-July CPI was effectively flat at +0.07%,
-> but oil prices moving materially higher now could feed through into broader
-> inflation down the road.
->
-> The equity selloff appears to be a straightforward response: higher yields
-> compressed valuations (7,636 for the S&P 500 on Sept 9 vs. 7,753 in early August),
-> and the rising energy costs threaten both corporate margins and consumer
-> purchasing power. With the Fed holding rates steady at 3.63% and unemployment
-> stable at 4.1%, there's little immediate policy relief on the horizon. Instead, the
-> market seems to be repricing duration and inflation risk.
->
-> The dollar's weakness (down to 98.81 from 99.82) is noteworthy and somewhat
-> counterintuitive against rising Treasury yields, but it may reflect expectations
-> that higher commodity prices will eventually force the Fed to move differently
-> than markets originally priced in—possibly toward easing if growth slows—or
-> simply reflects global risk repricing where dollar-denominated commodities become
-> less attractive in dollar terms.
->
-> **Confidence level: High on the energy shock and its market transmission; medium
-> on whether this reflects temporary disruption or persistent supply issues.** The
-> macro backdrop (solid 1.95% GDP growth, contained inflation so far) suggests
-> fundamentals remain intact, but tail risks around energy costs have visibly moved
-> to the fore.
-
-</details>
-
 ### Multi-agent debate
 
 ![Debate cycle flowchart: the Analyst drafts while the optional Context agent researches news in round 1; the Skeptic critiques; blocking (high-severity) critiques go straight back to the Analyst; otherwise, on the last round or after a fallback the Editor must publish, else it chooses publish or revise; the result is the final narrative plus changelog and transcript](docs/debate_cycle_flow.png)
