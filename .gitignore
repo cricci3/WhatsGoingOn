@@ -221,5 +221,3 @@ __marimo__/
 .streamlit/secrets.toml
 .claude/skills/grill-me
 ObsidianWGO/*
-past_conversations/*
-docs/*
