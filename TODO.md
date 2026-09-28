@@ -57,7 +57,7 @@ non supportati, causalità affrettata, confidence gonfiata; può rimandarla indi
 max N giri) → **Editor** (decide se pubblicare o rifare un giro, produce la finale +
 changelog di cosa è cambiato e perché).
 
-### Settimana 1 — Message passing e orchestratore sequenziale
+### Point 1 — Message passing e orchestratore sequenziale
 - [x] Schema di stato condiviso tra agenti (draft con claim taggati, lista critiche con
       severità, storico dei giri)
 - [x] Orchestratore hand-rolled: Analyst → Skeptic → (loop Analyst se serve) → Editor,
@@ -66,7 +66,7 @@ changelog di cosa è cambiato e perché).
       estende `logging_config.py`
 - [x] Un ciclo completo gira da CLI (`whatsgoingon-debate`): bozza + critica + finale, tutto tracciato
 
-### Settimana 2 — Concorrenza, budget, fallimenti
+### Point 2 — Concorrenza, budget, fallimenti
 - [x] `asyncio` dove ha senso far girare agenti in parallelo (es. Skeptic + un quarto
       agente "Context" che cerca news mentre l'Analyst pensa)
 - [x] Budget per-agente e per-ciclo (token/costo), con fallback esplicito invece di
@@ -76,7 +76,7 @@ changelog di cosa è cambiato e perché).
 - [x] Test che mockano ogni agente separatamente e verificano l'orchestrazione, non
       solo l'output finale
 
-### Settimana 3 — Produzione
+### Point 3 — Produzione
 - [x] Endpoint API che espone anche la trascrizione del dibattito (bozza, critiche,
       finale, changelog), non solo il risultato finale — `POST /debate`, `GET /debate`,
       `GET /debate/{month}`; trascrizioni salvate in `data/debates/<mese>.json`
@@ -86,7 +86,7 @@ changelog di cosa è cambiato e perché).
       L'Analyst pesa il 56–61% perché rifà ricerca a ogni revisione. Tabella e dettagli nel
       README ("Cost: one agent vs. a three-agent debate")
 
-### Settimana 4 — Rifinitura e demo
+### Point 4 — Rifinitura e demo
 - [ ] CI estesa (riusa `.github/workflows/ci.yml` come base)
 - [ ] UI minimale che mostra il dibattito come conversazione (bozza → critica →
       revisione → finale), non solo il testo finale
@@ -95,11 +95,4 @@ changelog di cosa è cambiato e perché).
       changelog, ma non ancora le bozze e le critiche giro per giro
 - [ ] README/CLAUDE.md aggiornati: quando il pattern debate/critique ha davvero
       cambiato l'output (esempi concreti dai run) vs quando è stato solo overhead
-- [ ] Publish on GitHub pages
-
-## Working conventions (promemoria)
-
-- Infrastruttura più semplice possibile per lo scope del mese (SQLite, Chroma locale,
-  niente framework agentico) — vale anche per la Fase 2
-- Agent loop hand-rolled: i meccanismi di tool calling e coordinamento restano visibili
-- Git deliberato anche da soli: commit strutturati, branch, PR
+- [ ] (Publish on GitHub pages)
