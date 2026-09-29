@@ -96,6 +96,3 @@ changelog di cosa è cambiato e perché).
       finale: brief del Context, poi per ogni giro la bozza dell'Analyst (espandibile), le
       critiche dello Skeptic con severità e il claim citato, i fallback, la nota dell'Editor
       (o "saltato" per critiche high), e la decisione di pubblicazione
-- [ ] README/CLAUDE.md aggiornati: quando il pattern debate/critique ha davvero
-      cambiato l'output (esempi concreti dai run) vs quando è stato solo overhead
-- [ ] (Publish on GitHub pages)
