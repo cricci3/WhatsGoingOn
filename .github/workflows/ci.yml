@@ -6,7 +6,35 @@ on:
   pull_request:
     branches: [main]
 
+# A newer push to the same branch/PR makes the running checks moot.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v4
+        with:
+          enable-cache: true
+
+      - name: Set up Python
+        run: uv python install
+
+      # --locked fails if uv.lock is out of date with pyproject.toml.
+      - name: Install dependencies
+        run: uv sync --locked --all-extras --dev
+
+      - name: Lint
+        run: uv run ruff check --output-format=github .
+
+      - name: Format
+        run: uv run ruff format --check .
+
   test:
     runs-on: ubuntu-latest
     steps:
@@ -21,10 +49,45 @@ jobs:
         run: uv python install
 
       - name: Install dependencies
-        run: uv sync --all-extras --dev
-
-      - name: Lint
-        run: uv run ruff check .
+        run: uv sync --locked --all-extras --dev
 
       - name: Test
         run: uv run pytest -q
+
+      # The console scripts are what the README tells people to run; --help imports each
+      # entry point's whole module tree without touching the network or needing API keys.
+      - name: CLI entry points
+        run: |
+          uv run whatsgoingon --help
+          uv run whatsgoingon-agent --help
+          uv run whatsgoingon-debate --help
+
+  docker:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: docker/setup-buildx-action@v3
+
+      - name: Build image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          load: true
+          tags: whatsgoingon:ci
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      # No API keys and an empty data volume: the app must still start, serve the demo page,
+      # and answer "nothing generated yet" instead of crashing.
+      - name: Smoke test
+        run: |
+          docker run -d --name wgo -p 8000:8000 whatsgoingon:ci
+          curl -fsS --retry 15 --retry-delay 2 --retry-all-errors http://localhost:8000/health
+          curl -fsS http://localhost:8000/ | grep -q "WhatsGoingOn"
+          test "$(curl -s -o /dev/null -w '%{http_code}' http://localhost:8000/debate)" = 404
+          test "$(curl -s -o /dev/null -w '%{http_code}' http://localhost:8000/debate/not-a-month)" = 422
+
+      - name: Container logs
+        if: always()
+        run: docker logs wgo || true

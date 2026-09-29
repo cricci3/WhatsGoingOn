@@ -87,12 +87,15 @@ changelog di cosa è cambiato e perché).
       README ("Cost: one agent vs. a three-agent debate")
 
 ### Point 4 — Rifinitura e demo
-- [ ] CI estesa (riusa `.github/workflows/ci.yml` come base)
-- [ ] UI minimale che mostra il dibattito come conversazione (bozza → critica →
-      revisione → finale), non solo il testo finale
-      — parziale: la pagina demo ha lo switch singolo agente / dibattito e una barra di
-      avanzamento; in modalità dibattito mostra finale, giri/critiche/costo/tempo e il
-      changelog, ma non ancora le bozze e le critiche giro per giro
+- [x] CI estesa (riusa `.github/workflows/ci.yml` come base) — tre job paralleli: `lint`
+      (ruff check + `ruff format --check`, `uv sync --locked` fallisce se `uv.lock` è
+      stale), `test` (pytest + `--help` di ogni CLI), `docker` (build con cache GHA + smoke
+      test del container senza chiavi: `/health`, `/`, `/debate` → 404, mese invalido → 422)
+- [x] UI minimale che mostra il dibattito come conversazione (bozza → critica →
+      revisione → finale), non solo il testo finale — in modalità dibattito, sotto il
+      finale: brief del Context, poi per ogni giro la bozza dell'Analyst (espandibile), le
+      critiche dello Skeptic con severità e il claim citato, i fallback, la nota dell'Editor
+      (o "saltato" per critiche high), e la decisione di pubblicazione
 - [ ] README/CLAUDE.md aggiornati: quando il pattern debate/critique ha davvero
       cambiato l'output (esempi concreti dai run) vs quando è stato solo overhead
 - [ ] (Publish on GitHub pages)

@@ -29,6 +29,15 @@ def test_index_can_switch_between_single_agent_and_debate() -> None:
     assert 'role="progressbar"' in page
 
 
+def test_index_shows_the_debate_as_a_conversation() -> None:
+    page = client.get("/").text
+
+    assert "The debate, round by round" in page
+    assert "function debateConversationHtml(data)" in page
+    for agent in ("analyst", "context", "skeptic", "editor"):
+        assert f".msg.{agent}" in page
+
+
 def test_health() -> None:
     response = client.get("/health")
 
