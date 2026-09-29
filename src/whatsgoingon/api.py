@@ -60,6 +60,10 @@ _INDEX_HTML = """\
     --error-bg: #fef2f2;
     --warning: #92400e;
     --warning-bg: #fffbeb;
+    --analyst: #4f46e5;
+    --context: #0f766e;
+    --skeptic: #b45309;
+    --editor: #15803d;
   }
   @media (prefers-color-scheme: dark) {
     :root:not([data-theme="light"]) {
@@ -76,6 +80,10 @@ _INDEX_HTML = """\
       --error-bg: #3a1a1a;
       --warning: #fbbf24;
       --warning-bg: #3a2f0f;
+      --analyst: #818cf8;
+      --context: #2dd4bf;
+      --skeptic: #fbbf24;
+      --editor: #4ade80;
     }
   }
   :root[data-theme="dark"] {
@@ -92,6 +100,10 @@ _INDEX_HTML = """\
     --error-bg: #3a1a1a;
     --warning: #fbbf24;
     --warning-bg: #3a2f0f;
+    --analyst: #818cf8;
+    --context: #2dd4bf;
+    --skeptic: #fbbf24;
+    --editor: #4ade80;
   }
   * { box-sizing: border-box; }
   body {
@@ -273,6 +285,58 @@ _INDEX_HTML = """\
   .debate-meta details { margin-top: 0.75rem; }
   .debate-meta summary { cursor: pointer; color: var(--accent); font-weight: 600; }
   .debate-meta .changelog { margin-top: 0.5rem; color: var(--text); line-height: 1.55; }
+  .convo {
+    list-style: none;
+    margin: 0.75rem 0 0;
+    padding: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 0.6rem;
+  }
+  .convo-round {
+    font-size: 0.72rem;
+    font-weight: 700;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    color: var(--text-muted);
+    margin-top: 0.4rem;
+  }
+  .msg {
+    border: 1px solid var(--border);
+    border-left: 3px solid var(--agent, var(--accent));
+    border-radius: 0.6rem;
+    padding: 0.6rem 0.8rem;
+    color: var(--text);
+    line-height: 1.5;
+    overflow-wrap: anywhere;
+  }
+  .msg.analyst { --agent: var(--analyst); }
+  .msg.context { --agent: var(--context); }
+  .msg.skeptic { --agent: var(--skeptic); }
+  .msg.editor { --agent: var(--editor); }
+  .msg.fallback { --agent: var(--warning); background: var(--warning-bg); }
+  .msg-who { font-weight: 700; font-size: 0.8rem; color: var(--agent); margin-bottom: 0.25rem; }
+  .msg-who span { font-weight: 400; color: var(--text-muted); }
+  .msg p { margin: 0 0 0.5rem; }
+  .msg p:last-child { margin-bottom: 0; }
+  .msg ul { margin: 0.25rem 0 0; padding-left: 1.2rem; }
+  .msg li { margin-bottom: 0.35rem; }
+  .msg details { margin-top: 0.4rem; }
+  .msg .draft-text { margin-top: 0.5rem; font-size: 0.92rem; }
+  .msg .quote { display: block; color: var(--text-muted); font-size: 0.85em; font-style: italic; }
+  .sev {
+    display: inline-block;
+    font-size: 0.7rem;
+    font-weight: 700;
+    text-transform: uppercase;
+    padding: 0.05rem 0.4rem;
+    border-radius: 999px;
+    margin-right: 0.3rem;
+    background: var(--accent-soft);
+    color: var(--text-muted);
+  }
+  .sev.medium { background: var(--warning-bg); color: var(--warning); }
+  .sev.high { background: var(--error-bg); color: var(--error); }
   .progress { margin-top: 1.25rem; }
   .progress[hidden] { display: none; }
   .progress-track {
@@ -509,6 +573,87 @@ _INDEX_HTML = """\
     }
   }
 
+  function agentMessage(agent, who, bodyHtml) {
+    return '<li class="msg ' + agent + '"><div class="msg-who">' + who + "</div>" + bodyHtml + "</li>";
+  }
+
+  function plural(n, word) {
+    return n + " " + word + (n === 1 ? "" : "s");
+  }
+
+  // The transcript as a conversation: Context's brief, then per round the Analyst's draft,
+  // the Skeptic's critiques and what the Editor (or the orchestrator) did with them, then
+  // the Editor's publishing decision. Fallbacks appear in the round they happened.
+  function debateConversationHtml(data) {
+    const parts = [];
+    if (data.context) {
+      const events = data.context.events.map((e) => {
+        const related = e.related_series.length ? '<span class="quote">' +
+          escapeHtml(e.related_series.join(", ")) + "</span>" : "";
+        return "<li>" + renderInline(e.summary) + related + "</li>";
+      }).join("");
+      let body = events ? "<ul>" + events + "</ul>" : "<p>No relevant news found.</p>";
+      if (data.context.notes) body += "<p>" + renderInline(data.context.notes) + "</p>";
+      parts.push(agentMessage("context", "Context <span>· news brief, in parallel with draft 1</span>",
+        body));
+    }
+    const fallbacksByRound = {};
+    (data.fallbacks || []).forEach((f) => {
+      // A failed Analyst revision adds no round of its own, so it can point past the last
+      // recorded round - show it there rather than drop it.
+      const round = Math.min(f.round, data.rounds.length);
+      (fallbacksByRound[round] = fallbacksByRound[round] || []).push(f);
+    });
+    data.rounds.forEach((r) => {
+      const last = r.round === data.rounds.length;
+      parts.push('<li class="convo-round">Round ' + r.round + "</li>");
+
+      const claims = {};
+      r.draft.claims.forEach((c) => { claims[c.id] = c; });
+      parts.push(agentMessage("analyst",
+        "Analyst <span>· " + (r.round === 1 ? "first draft" : "revision") + ", " +
+          plural(r.draft.claims.length, "claim") + "</span>",
+        "<details><summary>Read draft " + r.round + "</summary>" +
+          '<div class="draft-text">' + markdownToHtml(r.draft.narrative) + "</div></details>"));
+
+      if (r.review_skipped) {
+        parts.push(agentMessage("skeptic", "Skeptic",
+          "<p>Didn't review this draft: " + renderInline(r.review_skipped) + "</p>"));
+      } else if (r.critiques.length === 0) {
+        parts.push(agentMessage("skeptic", "Skeptic", "<p>No objections.</p>"));
+      } else {
+        const items = r.critiques.map((c) => {
+          const claim = claims[c.claim_id];
+          const quote = claim ? '<span class="quote">' + escapeHtml(c.claim_id) + ": “" +
+            renderInline(claim.text) + "”</span>" : "";
+          return '<li><span class="sev ' + escapeHtml(c.severity) + '">' + escapeHtml(c.severity) +
+            "</span>" + renderInline(c.comment) + quote + "</li>";
+        }).join("");
+        parts.push(agentMessage("skeptic", "Skeptic <span>· " +
+          plural(r.critiques.length, "critique") + "</span>", "<ul>" + items + "</ul>"));
+      }
+
+      (fallbacksByRound[r.round] || []).forEach((f) => {
+        parts.push(agentMessage("fallback", escapeHtml(f.agent) + " <span>· fallback</span>",
+          "<p>" + renderInline(f.reason) + " → " + renderInline(f.action) + "</p>"));
+      });
+
+      if (r.editor_note) {
+        parts.push(agentMessage("editor", "Editor <span>· sent back for revision</span>",
+          markdownToHtml(r.editor_note)));
+      } else if (!last && r.critiques.some((c) => c.severity === "high")) {
+        parts.push(agentMessage("editor", "Editor <span>· skipped</span>",
+          "<p>High-severity critique: the draft went straight back to the Analyst.</p>"));
+      }
+    });
+    if (data.final) {
+      // The changelog is already shown above the conversation, so only the reason goes here.
+      const body = data.final.reason ? markdownToHtml(data.final.reason) : "";
+      parts.push(agentMessage("editor", "Editor <span>· published the narrative above</span>", body));
+    }
+    return '<ol class="convo">' + parts.join("") + "</ol>";
+  }
+
   function showDebate(data) {
     monthBadge.textContent = data.month;
     timestampEl.textContent = formatTimestamp(data.generated_at);
@@ -527,6 +672,8 @@ _INDEX_HTML = """\
       html += "<details><summary>What the debate changed</summary>" +
         '<div class="changelog">' + markdownToHtml(data.final.changelog) + "</div></details>";
     }
+    html += "<details open><summary>The debate, round by round</summary>" +
+      debateConversationHtml(data) + "</details>";
     debateMetaEl.innerHTML = html;
     debateMetaEl.hidden = false;
     playFadeIn();

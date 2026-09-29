@@ -10,6 +10,7 @@ from whatsgoingon.pricing import PRICES_PER_MTOK, estimate_cost_usd
 
 logger = logging.getLogger(__name__)
 
+
 class AgentUnavailable(RuntimeError):
     """An agent can't produce its output because it hit one of its limits. The orchestrator
     catches it and applies an explicit, recorded fallback - it never means "silently stop"."""

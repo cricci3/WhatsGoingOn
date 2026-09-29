@@ -162,7 +162,10 @@ def _state_with_rounds(n: int, max_rounds: int = 3) -> DebateState:
 
 def test_editor_publish_carries_final_narrative_and_changelog() -> None:
     submitted = {
-        "action": "publish", "reason": "ok", "final_narrative": "Final.", "changelog": "Softened c1."
+        "action": "publish",
+        "reason": "ok",
+        "final_narrative": "Final.",
+        "changelog": "Softened c1.",
     }
     client = client_with(response(tool_use("submit_decision", submitted)))
 
